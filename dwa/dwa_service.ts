@@ -2,6 +2,16 @@ import { typeByExtension } from "https://deno.land/std/media_types/mod.ts";
 import { extname } from "https://deno.land/std/path/mod.ts";
 
 export function startDenoWebApp(root: string, port: number, apiImpl: {[key: string]: Function}) {
+    const corsHeaders = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Content-Length, X-Requested-With",
+    };
+    const handlerCORS = async (req: Request) => {
+        const response = await handler(req);
+        response.headers.set("Access-Control-Allow-Origin", "*");
+        return response;
+    }
     const handler = async (req: Request) => {
         let path = new URL(req.url).pathname;
     
@@ -37,6 +47,6 @@ export function startDenoWebApp(root: string, port: number, apiImpl: {[key: stri
         }
     };
     
-    Deno.serve({ port }, handler);
+    Deno.serve({ port }, handlerCORS);
 }
 
