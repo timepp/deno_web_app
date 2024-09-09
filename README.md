@@ -1,40 +1,109 @@
 # Deno Web app
 
-This is a template for a web app that uses Deno as backend and TypeScript as frontend. It demonstrates how to define API interfaces between the web client and the backend script, and how to implement the API in the backend and bind it to the web client.
+This is a template for building native applications using modern tech stack:
 
-This template also implement a feature that enumerates all windows on Windows OS and shows them in the UI to demonstrate typed-communications between frontend and backend.
-![screenshot](doc/screenshot.png)
-To run it, clone the repo and run: `run.bat` on Windows, or invoking tsc and deno manually on other platforms.
+- Use web technologies (HTML, CSS, JS) for the frontend
+- Use Deno for the backend
+- Leverage existing browsers (Fully tested on Edge and Chrome) for hosting the UI
+- Use typescript for both frontend and backend
+- Be able to publish as JSR component, so that it can be used without any downloading/installation
 
-(pre-requisite: deno, tsc)
+This template is at the same time a demo showing all network interfaces.
 
-## Usage
+## Run the demo
+
+To run the demo, clone the repo and run
+
+```bash
+    deno run -A app.ts
+```
+
+![demo](doc/demo.png)
+
+pre-requisite:
+
+- deno
+- Edge or Chrome
+
+## Architecture
+
+![architecture](doc/architecture.drawio.svg)
+
+### API invoking
+
+API invoking is done by websocket message. Websocket is also used to prove presence of the backend/frontend. The backend and frontend all together behaves as a single app:
+
+- If the backend is killed, the frontend will close as well.
+- If there is no frontend connected, the backend will exit as well (after a short delay).
+
+### Vite dev server
+
+## Build your app logic
 
 You define API interfaces between the web client and the backend script in `api.ts`:
 
 ```typescript
-    export type API = {
-        checkResult: (a:number, b:number, res:number) => string,
-        getWindows: () => {title:string, className:string}[]
+export const api = {
+    getNetworkInfo: async function (name: string) {
+        return await callAPI(arguments) as NetworkInfo[]
     }
-    export const api: Promisify<API> = {
-        checkResult: (a, b, res) => fetchAPI('checkResult', [a, b, res]),
-        getWindows: () => fetchAPI('getWindows', []),
-    }
+}
+
+export type BackendAPI = typeof api
 ```
 
-Then you implement the API in `api_impl.ts`.
+Note that we follow the DRY principle whenever possible. Above code do the following at the same time:
 
-Now you can use the API as normal function in the web client, e.g.:
+- Define the API interface: `getNetworkInfo (name: string) ... as NetworkInfo[]`
+- Implement the API at frontend: `return await callAPI(arguments)`
+- Derive the API for the backend: `export type BackendAPI = typeof api`
+
+All the major part of the API (signature, input params and return type) is written exactly once.
+
+Then you implement the API in `api_impl.ts`:
 
 ```typescript
-    import {api} from '../api.js'
-    ...
-    const windows = await api.getWindows()
-    for (const w of windows) {
-        const div = document.createElement('div');
-        div.innerHTML = `<b>${w.title}</b> (${w.className})`;
-        app.appendChild(div);
+import {api} from './api.ts'
+
+export const apiImpl: BackendAPI = {
+    getNetworkInfo: async function (name: string) {
+        const ni = Deno.networkInterfaces()
+        return ni.filter(n => !name || n.name === name)
     }
-    document.body.appendChild(app);
+}
 ```
+
+API name and signatures are written again here. **This is the only place where you need to repeat**. But since `apiImpl` implements `BackendAPI`, you will get a compile time check in case anything mismatch.
+
+You use the API in frontend code:
+
+```typescript
+import {api} from '../api.ts'
+...
+const networkInfo = await api.getNetworkInfo('')
+...
+```
+
+Finally, in the app entrypoint, you call `startDenoUI`, passing the API implementation:
+
+```typescript
+import {startDenoUI} from './deno_ui.ts'
+import {apiImpl} from './api_impl.ts'
+async function main() {
+    await denoUI.startDenoUI({
+        frontendRoot: 'frontend',
+        apiImpl
+    })
+}
+main()
+```
+
+`startDenoUI` will start the http server, websocket server and launch browser to navigate to the corresponding web address.
+
+## Hosting app in JSR
+
+Although we can import remote code from JSR, static assets (HTML, CSS and other types) are not able to be downloaded by `imports`. However, we can encode all the static assets into one json file which can be imported from typescript. The http server will decode them in memory and serve them as if they are static assets.
+
+![jsr](doc/jsr.drawio.svg)
+
+The script `build.ts` will build frontend using vite and encode all files under `frontend/dist` into `assets.ts` for remote loading.

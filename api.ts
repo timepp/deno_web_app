@@ -1,11 +1,22 @@
-// this doesn't work in TSC
-import { fetchAPI } from './dwa/dwa_client.ts'
+// deno-lint-ignore-file no-unused-vars
+import { callAPI } from './websocket-client.ts'
+export { getWebSocket } from './websocket-client.ts'
+
+export type NetworkInfo = {
+    name: string;
+    family: "IPv4" | "IPv6";
+    address: string;
+    netmask: string;
+    scopeid: number | null;
+    cidr: string;
+    mac: string;
+}
 
 export const api = {
-    checkResult: async function (_a:number, _b:number, _res:number) {
-        return await fetchAPI('checkResult', arguments) as string
-    },
-    getWindows: async function () {
-        return await fetchAPI('getWindows', arguments) as {title:string, className:string}[]
+    getNetworkInfo: async function (name: string) {
+        return await callAPI(arguments) as NetworkInfo[]
     }
 }
+
+export type BackendAPI = typeof api
+

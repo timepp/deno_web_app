@@ -1,0 +1,6 @@
+{
+    "name": "@timepp/dui",
+    "version": "0.1.0",
+    "exports": "./app.ts",
+    "license": "MIT"
+}
