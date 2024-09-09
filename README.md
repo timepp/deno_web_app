@@ -12,7 +12,13 @@ This template is at the same time a demo showing all network interfaces.
 
 ## Run the demo
 
-To run the demo, clone the repo and run
+To run the demo from jsr directly:
+
+```bash
+    deno run -A jsr:@timepp/dui
+```
+
+To run the demo locally, clone the repo and run
 
 ```bash
     deno run -A app.ts
@@ -38,7 +44,17 @@ API invoking is done by websocket message. Websocket is also used to prove prese
 
 ### Vite dev server
 
-## Build your app logic
+### Hosting app in JSR
+
+Although we can import remote code from JSR, static assets (HTML, CSS and other types) are not able to be downloaded by `imports`. However, we can encode all the static assets into one json file which can be imported from typescript. The http server will decode them in memory and serve them as if they are static assets.
+
+![jsr](doc/jsr.drawio.svg)
+
+The script `build.ts` will build frontend using vite and encode all files under `frontend/dist` into `assets.ts` for remote loading.
+
+## Build your own app
+
+After cloning the repo, you can start building your own app very quick by following the steps below.
 
 You define API interfaces between the web client and the backend script in `api.ts`:
 
@@ -100,10 +116,13 @@ main()
 
 `startDenoUI` will start the http server, websocket server and launch browser to navigate to the corresponding web address.
 
-## Hosting app in JSR
+If you want to publish you app to JSR:
 
-Although we can import remote code from JSR, static assets (HTML, CSS and other types) are not able to be downloaded by `imports`. However, we can encode all the static assets into one json file which can be imported from typescript. The http server will decode them in memory and serve them as if they are static assets.
+1. change the information(package name, version, etc) in `jsr.json'
+2. run `deno run -A build.ts` to build the frontend and encode the assets
+3. commit your local changes
+4. run `deno publish` and follow the instructions
 
-![jsr](doc/jsr.drawio.svg)
+A successfully output is similar to the following for the first time of publish:
 
-The script `build.ts` will build frontend using vite and encode all files under `frontend/dist` into `assets.ts` for remote loading.
+![](doc/publish.png)
