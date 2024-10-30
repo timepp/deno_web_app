@@ -19,6 +19,8 @@ const files = bootstrapFiles.map(f => {
     }
 })
 
+const version = JSON.parse(Deno.readTextFileSync('jsr.json')).version
+
 ma.createMemoryAssets(files, 'bootstrap-assets.ts', f => {
     if (f.name === 'release-assets.ts') {
         const content = `export const assets = undefined // this file will be replaced by the build script`
@@ -28,7 +30,7 @@ ma.createMemoryAssets(files, 'bootstrap-assets.ts', f => {
         // while when generating app bootstrap code, we want to use `jsr:@timepp/dui`.
         // so we need to replace it when building the template.
         const localContent = Deno.readTextFileSync(f.path)
-        const content = localContent.replace('../index.ts', 'jsr:@timepp/dui')
+        const content = localContent.replace('../index.ts', 'jsr:@timepp/dui@' + version)
         return new TextEncoder().encode(content)
     }
     return null
