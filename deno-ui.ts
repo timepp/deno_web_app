@@ -98,12 +98,16 @@ function stopDenoWebAppService() {
 }
 
 const defaultDenoUIArgs = {
+    // true: hosting the built frontend code (pure html/js/css) in deno; need to build the frontend first
+    // false: hosting the frontend code in vite (for local development)
+    // this need to be true when deploying the app to jsr
     release: false,
     browser: 'chrome',
     frontendRoot: '.',
     entryPoint: 'index.html',
     apiPort: 22312,
     webPort: 5173,
+    // this won't take effect when `release` is false
     memoryAssets: {} as Record<string, string>,
     apiImpl: {} as {[key: string]: Function},
 }
@@ -118,7 +122,7 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     let backend : Deno.HttpServer | null = null
     for (let i = 0; i < 10; i++) {
         try {
-            backend = startDenoWebAppService(args.frontendRoot, apiPort, args.apiImpl);
+            backend = startDenoWebAppService(args.frontendRoot, apiPort, args.apiImpl, args.memoryAssets);
             break
         } catch (_e) {
             apiPort++
@@ -133,7 +137,8 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     let webPort = apiPort
     let frontend: vite.ViteDevServer | null = null
     // Use Vite for local development
-    if (!args.release && import.meta.url.startsWith('file://')) {
+    if (!args.release) {
+        console.log('starting vite frontend server')
         frontend = await vite.createServer({
             root: args.frontendRoot
         })
