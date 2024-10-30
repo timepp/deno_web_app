@@ -1,6 +1,6 @@
 import * as vite from 'npm:vite@5.3.3'
-import * as fs from 'jsr:@std/fs'
-import * as path from 'jsr:@std/path'
+import * as fs from 'jsr:@std/fs@1.0.5'
+import * as path from 'jsr:@std/path@1.0.7'
 import * as enc from 'jsr:@std/encoding@1.0.1'
 
 export function createMemoryAssets(files: {name:string, path:string}[], assetsFile: string) {

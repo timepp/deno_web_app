@@ -1,7 +1,7 @@
 let ws: WebSocket | null = null
 let requestID = 0
 const pendingPromises = new Map<number, (value: any) => void>()
-export async function getWebSocket() {
+export async function getWebSocket(): Promise<WebSocket> {
     if (!ws) {
         const proto = window.location.protocol
         const host = window.location.hostname
@@ -24,7 +24,7 @@ export async function getWebSocket() {
 }
 
 // call api using web socket
-export async function callAPI(args: IArguments, cmd?: string) {
+export async function callAPI(args: IArguments, cmd?: string): Promise<unknown> {
     if (!cmd) {
         const parent = new Error().stack?.split('\n')[2].match(/at ([^(]+)/)?.[1]
         cmd = parent?.split('.').slice(-1)[0].trim()
