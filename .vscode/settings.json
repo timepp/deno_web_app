@@ -1,7 +1,7 @@
 {
     "deno.enable": true,
     "deno.disablePaths": [
-        "./frontend"
+        "./sample-app/frontend"
     ],
     "cSpell.words": [
         "typeof"

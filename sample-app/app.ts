@@ -1,6 +1,6 @@
 import { parseArgs } from "jsr:@std/cli@0.224.7/parse-args"
 import { apiImpl } from './api-impl.ts'
-import * as denoUI from './deno-ui.ts'
+import * as denoUI from '../index.ts'
 
 async function main() {
     const args = parseArgs(Deno.args)

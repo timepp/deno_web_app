@@ -2,12 +2,11 @@ import * as vite from 'npm:vite@5.3.3'
 import {typeByExtension} from 'jsr:@std/media-types@1.0.1'
 import { extname } from 'jsr:@std/path@1.0.0'
 import * as enc from 'jsr:@std/encoding@1.0.1'
-import { assets } from './assets.ts'
 
 const clients: WebSocket[] = []
 let server: Deno.HttpServer | null = null
 const ac = new AbortController()
-function startDenoWebAppService(root: string, port: number, apiImpl: {[key: string]: Function}) {
+function startDenoWebAppService(root: string, port: number, apiImpl: {[key: string]: Function}, memoryAssets: Record<string, string> = {}) {
     const handlerCORS = async (req: Request) => {
         // handle websocket connection
         if (req.headers.get("upgrade") === "websocket") {
@@ -66,9 +65,9 @@ function startDenoWebAppService(root: string, port: number, apiImpl: {[key: stri
         try {
             console.log('serving', path)
             const relativePath = path.slice(1)
-            if (relativePath in assets) {
+            if (relativePath in memoryAssets) {
                 console.log('serving from assets', relativePath)
-                const content = enc.decodeBase64(assets[relativePath])
+                const content = enc.decodeBase64(memoryAssets[relativePath])
                 return new Response(content, {
                     headers: {
                         "content-type" : typeByExtension(extname(path)) || "text/plain"
@@ -105,6 +104,7 @@ const defaultDenoUIArgs = {
     entryPoint: 'index.html',
     apiPort: 22312,
     webPort: 5173,
+    memoryAssets: {} as Record<string, string>,
     apiImpl: {} as {[key: string]: Function},
 }
 

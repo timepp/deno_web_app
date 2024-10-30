@@ -1,16 +1,20 @@
-import * as vite from 'npm:vite@5.3.3'
-import * as fs from 'jsr:@std/fs'
-import * as enc from 'jsr:@std/encoding@1.0.1'
+import * as ma from './memory-asset.ts'
 
-const root = 'frontend'
-const r = await vite.build({
-    root,
-    configFile: 'vite.config.js',
+const bootstrapFiles = [
+    'frontend/index.html',
+    'frontend/ui.ts',
+    'api-impl.ts',
+    'api.ts',
+    'app.ts',
+    'websocket-client.ts',
+    '.vscode/settings.json'
+]
+
+const files = bootstrapFiles.map(f => {
+    return {
+        name: f,
+        path: `sample-app/${f}`,
+    }
 })
 
-const files = fs.expandGlobSync('**/*', { root: root + '/dist', includeDirs: false})
-const assetsLines = [...files].map(f => `  "${f.name}": "${enc.encodeBase64(Deno.readFileSync(f.path))}"`)
-const assetsTs = Deno.readTextFileSync('assets.ts')
-// replace object definition in assetsTs
-const newAssetsTs = assetsTs.replace(/export const assets: Record<string, string> = {[^}]*}/, `export const assets: Record<string, string> = {\n${assetsLines.join(',\n')}\n}`)
-Deno.writeTextFileSync('assets.ts', newAssetsTs)
+ma.createMemoryAssets(files, 'bootstrap-assets.ts')

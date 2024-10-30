@@ -7,7 +7,8 @@ export async function getWebSocket() {
         const host = window.location.hostname
         const params = new URLSearchParams(window.location.search)
         const port = params.get('_apiPort') || window.location.port || (proto === 'https:' ? '443' : '80')
-        ws = new WebSocket(`${proto === 'https:' ? 'wss:' : 'ws:'}//${host}:${port}`)
+        const url = (proto === 'https:' ? 'wss:' : 'ws:') + '//' + host + ':' + port
+        ws = new WebSocket(url)
         ws.onclose = () => { 
             console.log('close...')
             close() 
