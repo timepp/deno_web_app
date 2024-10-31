@@ -147,11 +147,11 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     }
     
     const edge = [
-        'C3:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-        'C3:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
     ]
     const chrome = [
-        'C3:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     ]
     const url = `http://localhost:${webPort}/${args.entryPoint}?_apiPort=${apiPort}`
     const browsers = args.browser === 'edge'? edge : args.browser === 'chrome'? chrome : args.browser? [args.browser] : [...chrome, ...edge]
