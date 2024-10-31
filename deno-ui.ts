@@ -147,19 +147,20 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     }
     
     const edge = [
-        'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-        'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C3:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C3:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
     ]
     const chrome = [
-        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C3:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     ]
+    const url = `http://localhost:${webPort}/${args.entryPoint}?_apiPort=${apiPort}`
     const browsers = args.browser === 'edge'? edge : args.browser === 'chrome'? chrome : args.browser? [args.browser] : [...chrome, ...edge]
     let cp: Deno.ChildProcess | null = null
     for (const browser of browsers) {
         console.log('trying to start browser:', browser)
         try {
             const cmd = new Deno.Command(browser, {
-                args: [`--app=http://localhost:${webPort}/${args.entryPoint}?_apiPort=${apiPort}`, '--new-window', '--profile-directory=Default'],
+                args: [`--app=${url}`, '--new-window', '--profile-directory=Default'],
             })
             cp = cmd.spawn()
             break
@@ -169,11 +170,11 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     }
 
     if (!cp) {
-        console.error('could not start browser')
-        Deno.exit(1)
+        console.log('could not start browser. however, you can navigate to the following url to open the frontend manually:')
+        console.log(url)
+    } else {
+        console.log('browser started, pid:', cp.pid)
     }
-
-    console.log('browser started, pid:', cp.pid)
 
     await backend.finished
     if (frontend) {
