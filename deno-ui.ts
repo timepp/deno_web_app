@@ -2,10 +2,29 @@ import * as vite from 'npm:vite@5.3.3'
 import {typeByExtension} from 'jsr:@std/media-types@1.0.1'
 import { extname } from 'jsr:@std/path@1.0.0'
 import * as enc from 'jsr:@std/encoding@1.0.1'
+import { changeWindowSize } from './change-window-size.ts'
 
 const clients: WebSocket[] = []
 let server: Deno.HttpServer | null = null
 const ac = new AbortController()
+let appName = 'dui'
+
+function saveWindowPlacement(x: number, y: number, width: number, height: number) {
+    const data = {x, y, width, height}
+    const path = Deno.env.get('APPDATA') + '/' + appName + '-window.json'
+    Deno.writeTextFileSync(path, JSON.stringify(data))
+}
+
+function loadWindowPlacement() {
+    const path = Deno.env.get('APPDATA') + '/' + appName + '-window.json'
+    try {
+        const data = JSON.parse(Deno.readTextFileSync(path))
+        return data
+    } catch {
+        return null
+    }
+}
+
 function startDenoWebAppService(root: string, port: number, apiImpl: {[key: string]: Function}, memoryAssets: Record<string, string> = {}) {
     const handlerCORS = async (req: Request) => {
         // handle websocket connection
@@ -20,6 +39,13 @@ function startDenoWebAppService(root: string, port: number, apiImpl: {[key: stri
             socket.onmessage = async (e) => {
                 const {id, cmd, args} = JSON.parse(e.data)
                 console.log('received command:', cmd, args)
+                if (id === 0) {
+                    // system message to update window size and position
+                    const [x, y, width, height] = args
+                    // save the information in a file under user data directory
+                    saveWindowPlacement(x, y, width, height)
+                    return
+                }
                 try {
                     let result = `unknown command: ${cmd}`
                     if (cmd in apiImpl) {
@@ -80,8 +106,8 @@ function startDenoWebAppService(root: string, port: number, apiImpl: {[key: stri
                     "content-type" : typeByExtension(extname(path)) || "text/plain"
                 }
             });
-        } catch(ex){
-            if(ex.code === "ENOENT"){
+        } catch(e){
+            if((e as any).code === "ENOENT"){
                 // check from static assets
                 return new Response("Not Found", { status: 404 });
             }
@@ -98,6 +124,7 @@ function stopDenoWebAppService() {
 }
 
 const defaultDenoUIArgs = {
+    appName: 'dui',
     // true: hosting the built frontend code (pure html/js/css) in deno; need to build the frontend first
     // false: hosting the frontend code in vite (for local development)
     // this need to be true when deploying the app to jsr
@@ -116,6 +143,8 @@ export type DenoUIArgs = typeof defaultDenoUIArgs
 
 export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     const args = {...defaultDenoUIArgs, ...options}
+
+    appName = args.appName
 
     // try different ports if the default one is already in use
     let apiPort = args.apiPort
@@ -155,13 +184,17 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     ]
     const url = `http://localhost:${webPort}/${args.entryPoint}?_apiPort=${apiPort}`
     const browsers = args.browser === 'edge'? edge : args.browser === 'chrome'? chrome : args.browser? [args.browser] : [...chrome, ...edge]
+    const wp = loadWindowPlacement()
     let cp: Deno.ChildProcess | null = null
     for (const browser of browsers) {
         console.log('trying to start browser:', browser)
         try {
-            const cmd = new Deno.Command(browser, {
-                args: [`--app=${url}`, '--new-window', '--profile-directory=Default'],
-            })
+            const args = [`--app=${url}`, `--new-window`]
+            if (wp) {
+                args.push(`--window-position=${wp.x},${wp.y}`)
+                args.push(`--window-size=${wp.width},${wp.height}`)
+            }
+            const cmd = new Deno.Command(browser, {args})
             cp = cmd.spawn()
             break
         } catch (e) {
@@ -176,12 +209,23 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
         console.log('browser started, pid:', cp.pid)
     }
 
+    if (wp) {
+        for (let i = 0; i < 30; i++) {
+            if (changeWindowSize(appName, null, wp.x, wp.y, wp.width, wp.height)) {
+                break
+            }
+            await new Promise(r => setTimeout(r, 100))
+        }
+    }
+
     await backend.finished
     if (frontend) {
-        await frontend.close()
+        // console.log('closing frontend server')
+        // frontend.close()
     }
     // await apiImpl.cleanUp()
     console.log('App Exit')
+    Deno.exit(0)
 }
 
 export function stopDenoUI() {

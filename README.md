@@ -1,14 +1,13 @@
-# Deno Web app
+# DenoUI: Developing Native Applications with a Modern Tech Stack
 
-Building native applications using modern tech stack:
+- **Modern**: Build with modern web technologies for a responsive user interface.
+- **Clean**: Use Deno to provide a fast, secure backend environment.
+- **Lightweight**: Leverage existing browsers (such as Edge or Chrome) to display the application interface.
+- **Typed**: TypeScript for both frontend and backend code.
+- **DRY**: Minimize boilerplate code by defining API interfaces once and deriving frontend and backend implementations.
+- **Installation Free**: Can be packaged as a JSR component, enabling installation-free execution.
 
-- Use web technologies (html, css, typescript, vite) for the frontend
-- Use Deno for the backend
-- Leverage existing browsers (Edge, Chrome or others) for hosting the UI
-- Use typescript for both frontend and backend
-- Be able to publish as JSR component, so that it can be run without installation
-
-Check the demo app (which shows all your network interfaces) with the following single line command:
+To see a demo app (which displays your network interfaces), simply run the following command:
 
 ```bash
 deno run -A jsr:@timepp/dui/demo
@@ -83,7 +82,7 @@ You can publish your app to JSR so that it can be run without installation.
 
 #### background: why we need to encode resources
 
-Although we can import remote code from JSR, static assets (HTML, CSS and other types) are not able to be downloaded by `imports`. However, we can encode all the static assets into one json file which can be imported from typescript. One user machine, the backend will decode them in memory and serve them as if they are static assets.
+While we can import remote code from JSR, importing static assets like HTML, CSS, and other types isn't possible directly. To download these assets, we need to encode them into a single TypeScript source file for import. On the user’s machine, the backend will decode these assets and serve them from memory.
 
 ![jsr](doc/jsr.drawio.svg)
 
@@ -100,6 +99,12 @@ API invoking is done by websocket message. Websocket is also used to prove prese
 
 ## Platform support
 
-Currently only fully works on Windows.
+The generated app can run without any change on Windows.
+In other OS you need to provide the path to the browser executable when calling `startDenoUI`, e.g.:
 
-The reason is that when we launch app we used hard coded browser app path. For other platform, you need to manually navigate to the url shown in the console.
+```typescript
+denoUI.startDenoUI({
+    browser: '/usr/bin/google-chrome-stable',
+    ...
+})
+```

@@ -2,6 +2,7 @@ import * as ma from './memory-asset.ts'
 
 const bootstrapFiles = [
     'frontend/index.html',
+    'frontend/style.css',
     'frontend/ui.ts',
     'api-impl.ts',
     'api.ts',

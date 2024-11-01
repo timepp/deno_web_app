@@ -1,6 +1,17 @@
 let ws: WebSocket | null = null
-let requestID = 0
+let requestID = 100
 const pendingPromises = new Map<number, (value: any) => void>()
+
+let windowPlacement = [0, 0, 0, 0]
+// Since browser won't remember app window placement, we need to save it in the app
+function saveWindowPlacement() {
+    const w = globalThis as any
+    const wp = [w.screenX, w.screenY, w.outerWidth, w.outerHeight]
+    if (wp.every((v, i) => v === windowPlacement[i])) return
+    windowPlacement = wp
+    ws?.send(JSON.stringify({ id: 0, cmd: 'setWindowSize', args: wp }))
+}
+
 export async function getWebSocket(): Promise<WebSocket> {
     if (!ws) {
         const proto = window.location.protocol
@@ -9,6 +20,7 @@ export async function getWebSocket(): Promise<WebSocket> {
         const port = params.get('_apiPort') || window.location.port || (proto === 'https:' ? '443' : '80')
         const url = (proto === 'https:' ? 'wss:' : 'ws:') + '//' + host + ':' + port
         ws = new WebSocket(url)
+        setInterval(saveWindowPlacement, 1000);
         ws.onclose = () => { 
             console.log('close...')
             close() 
