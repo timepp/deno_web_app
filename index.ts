@@ -1,4 +1,3 @@
-export * from './sample-app/websocket-client.ts'
 export * from './deno-ui.ts'
 export * from './memory-asset.ts'
 

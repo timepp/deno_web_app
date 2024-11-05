@@ -1,5 +1,5 @@
 // deno-lint-ignore-file no-unused-vars
-import { callAPI } from './websocket-client.ts'
+import { callAPI } from './frontend/websocket-client.ts'
 
 export type NetworkInfo = {
     name: string;

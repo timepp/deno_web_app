@@ -4,12 +4,12 @@ const bootstrapFiles = [
     'frontend/index.html',
     'frontend/style.css',
     'frontend/ui.ts',
+    'frontend/websocket-client.ts',
     'api-impl.ts',
     'api.ts',
     'app.ts',
-    'build.ts',
+    'build-release-assets.ts',
     'release-assets.ts',
-    'websocket-client.ts',
     '.vscode/settings.json'
 ]
 

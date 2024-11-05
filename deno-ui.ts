@@ -3,6 +3,7 @@ import {typeByExtension} from 'jsr:@std/media-types@1.0.1'
 import { extname } from 'jsr:@std/path@1.0.0'
 import * as enc from 'jsr:@std/encoding@1.0.1'
 import { changeWindowSize } from './change-window-size.ts'
+import * as so from "jsr:@lambdalisue/systemopen@1.0.0";
 
 const clients: WebSocket[] = []
 let server: Deno.HttpServer | null = null
@@ -125,17 +126,28 @@ function stopDenoWebAppService() {
 
 const defaultDenoUIArgs = {
     appName: 'dui',
+
     // true: hosting the built frontend code (pure html/js/css) in deno; need to build the frontend first
     // false: hosting the frontend code in vite (for local development)
     // this need to be true when deploying the app to jsr
     release: false,
+
+    // msedge,chrome, or other browser path
+    // if browser is not found, it will open with the default browser
     browser: 'chrome',
+
+    // the app mode has separate window frame
+    // note that it's currently only supported on Windows
+    appMode: true,
+
     frontendRoot: '.',
     entryPoint: 'index.html',
     apiPort: 22312,
     webPort: 5173,
+
     // this won't take effect when `release` is false
     memoryAssets: {} as Record<string, string>,
+
     apiImpl: {} as {[key: string]: Function},
 }
 
@@ -145,6 +157,8 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     const args = {...defaultDenoUIArgs, ...options}
 
     appName = args.appName
+
+    let appMode = Deno.build.os === 'windows'? args.appMode : false
 
     // try different ports if the default one is already in use
     let apiPort = args.apiPort
@@ -182,19 +196,16 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     const chrome = [
         'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     ]
-    const url = `http://localhost:${webPort}/${args.entryPoint}?_apiPort=${apiPort}`
+    const appModeParam = appMode? '&_saveWindow' : ''
+    const url = `http://localhost:${webPort}/${args.entryPoint}?_apiPort=${apiPort}${appModeParam}`
     const browsers = args.browser === 'edge'? edge : args.browser === 'chrome'? chrome : args.browser? [args.browser] : [...chrome, ...edge]
-    const wp = loadWindowPlacement()
     let cp: Deno.ChildProcess | null = null
+
     for (const browser of browsers) {
         console.log('trying to start browser:', browser)
         try {
-            const args = [`--app=${url}`, `--new-window`]
-            if (wp) {
-                args.push(`--window-position=${wp.x},${wp.y}`)
-                args.push(`--window-size=${wp.width},${wp.height}`)
-            }
-            const cmd = new Deno.Command(browser, {args})
+            const urlArg = appMode? `--app=${url}` : url
+            const cmd = new Deno.Command(browser, { args: [urlArg] })
             cp = cmd.spawn()
             break
         } catch (e) {
@@ -203,18 +214,22 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     }
 
     if (!cp) {
-        console.log('could not start browser. however, you can navigate to the following url to open the frontend manually:')
-        console.log(url)
+        appMode = false
+        console.log('open with default browser: ', url)
+        so.systemopen(url)
     } else {
         console.log('browser started, pid:', cp.pid)
     }
 
-    if (wp) {
-        for (let i = 0; i < 30; i++) {
-            if (changeWindowSize(appName, null, wp.x, wp.y, wp.width, wp.height)) {
-                break
+    if (appMode) {
+        const wp = loadWindowPlacement()
+        if (wp) {
+            for (let i = 0; i < 30; i++) {
+                if (changeWindowSize(appName, null, wp.x, wp.y, wp.width, wp.height)) {
+                    break
+                }
+                await new Promise(r => setTimeout(r, 100))
             }
-            await new Promise(r => setTimeout(r, 100))
         }
     }
 

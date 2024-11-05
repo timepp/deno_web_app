@@ -20,7 +20,9 @@ export async function getWebSocket(): Promise<WebSocket> {
         const port = params.get('_apiPort') || window.location.port || (proto === 'https:' ? '443' : '80')
         const url = (proto === 'https:' ? 'wss:' : 'ws:') + '//' + host + ':' + port
         ws = new WebSocket(url)
-        setInterval(saveWindowPlacement, 1000);
+        if (params.get('_saveWindow') !== null) {
+            setInterval(saveWindowPlacement, 1000);
+        }
         ws.onclose = () => { 
             console.log('close...')
             close() 
