@@ -39,7 +39,7 @@ function startDenoWebAppService(root: string, port: number, apiImpl: {[key: stri
             }
             socket.onmessage = async (e) => {
                 const {id, cmd, args} = JSON.parse(e.data)
-                console.log('received command:', cmd, args)
+                console.log('received command:', cmd)
                 if (id === 0) {
                     // system message to update window size and position
                     const [x, y, width, height] = args
