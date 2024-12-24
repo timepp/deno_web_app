@@ -66,12 +66,14 @@ function startDenoWebAppService(root: string, port: number, apiImpl: {[key: stri
                 if (i >= 0) {
                     clients.splice(i, 1)
                 }
-                closeTimer = setTimeout(() => {
-                    if (clients.length === 0) {
-                        console.log('no more clients, shutting down server')
-                        ac.abort()
-                    }   
-                }, 2000)
+                if (clients.length === 0) {
+                    closeTimer = setTimeout(() => {
+                        if (clients.length === 0) {
+                            console.log('no more clients, shutting down server')
+                            ac.abort()
+                        }
+                    }, 3000)
+                }
             }
             socket.onerror = (e) => {
                 console.log("socket error", e);
@@ -195,6 +197,8 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     ]
     const chrome = [
         'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        'chrome'
     ]
     const appModeParam = appMode? '&_saveWindow' : ''
     const url = `http://localhost:${webPort}/${args.entryPoint}?_apiPort=${apiPort}${appModeParam}`
