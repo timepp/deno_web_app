@@ -12,6 +12,10 @@ function saveWindowPlacement() {
     ws?.send(JSON.stringify({ id: 0, cmd: 'setWindowSize', args: wp }))
 }
 
+export async function connectWebSocket() {
+    await getWebSocket()
+}
+
 export async function getWebSocket(): Promise<WebSocket> {
     if (!ws) {
         const proto = window.location.protocol
@@ -24,8 +28,8 @@ export async function getWebSocket(): Promise<WebSocket> {
             setInterval(saveWindowPlacement, 1000);
         }
         ws.onclose = () => { 
-            console.log('close...')
-            close() 
+            console.log('service closed.')
+            // close() 
         }
         ws.onmessage = e => {
             const { id, result } = JSON.parse(e.data)

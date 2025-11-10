@@ -36,3 +36,5 @@ ma.createMemoryAssets(files, 'bootstrap-assets.ts', f => {
     }
     return null
 })
+
+console.log('Bootstrap assets generated successfully in bootstrap-assets.ts')

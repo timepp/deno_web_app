@@ -1,4 +1,4 @@
-import * as vite from 'npm:vite@5.3.3'
+import * as vite from 'npm:vite@6.3.5'
 import {typeByExtension} from 'jsr:@std/media-types@1.0.1'
 import { extname } from 'jsr:@std/path@1.0.0'
 import * as enc from 'jsr:@std/encoding@1.0.1'
@@ -26,16 +26,16 @@ function loadWindowPlacement() {
     }
 }
 
-function startDenoWebAppService(root: string, port: number, apiImpl: {[key: string]: Function}, memoryAssets: Record<string, string> = {}) {
+function startDenoWebAppService(root: string, port: number, apiImpl: {[key: string]: Function}, memoryAssets: Record<string, string> = {}, closeWhenNoClients = false): Deno.HttpServer {
     const handlerCORS = async (req: Request) => {
         // handle websocket connection
         if (req.headers.get("upgrade") === "websocket") {
             const { socket, response } = Deno.upgradeWebSocket(req);
             let closeTimer = 0
             socket.onopen = () => {
-                console.log("socket opened");
-                clearTimeout(closeTimer)
                 clients.push(socket)
+                console.log("socket opened, total clients:", clients.length);
+                clearTimeout(closeTimer)
             }
             socket.onmessage = async (e) => {
                 const {id, cmd, args} = JSON.parse(e.data)
@@ -66,10 +66,12 @@ function startDenoWebAppService(root: string, port: number, apiImpl: {[key: stri
                 if (i >= 0) {
                     clients.splice(i, 1)
                 }
-                if (clients.length === 0) {
+                console.log("socket closed, total clients:", clients.length);
+                clearTimeout(closeTimer)
+                if (clients.length === 0 && closeWhenNoClients) {
+                    console.log('no more clients, shutting down server in 3 seconds')
                     closeTimer = setTimeout(() => {
                         if (clients.length === 0) {
-                            console.log('no more clients, shutting down server')
                             ac.abort()
                         }
                     }, 3000)
@@ -97,16 +99,19 @@ function startDenoWebAppService(root: string, port: number, apiImpl: {[key: stri
             if (relativePath in memoryAssets) {
                 console.log('serving from assets', relativePath)
                 const content = enc.decodeBase64(memoryAssets[relativePath])
-                return new Response(content, {
+                return new Response(new Uint8Array(content).buffer, {
                     headers: {
                         "content-type" : typeByExtension(extname(path)) || "text/plain"
                     }
                 });
             }
-            const file = await Deno.open(root + path);
+            const filePath = root + decodeURIComponent(path);
+            console.log('loading file from disk:', filePath)
+            const file = await Deno.open(filePath, { read: true });
             return new Response(file.readable, {
                 headers: {
-                    "content-type" : typeByExtension(extname(path)) || "text/plain"
+                    "content-type" : typeByExtension(extname(path)) || "text/plain",
+                    "Cache-Control": "public, max-age=31536000, immutable"
                 }
             });
         } catch(e){
@@ -126,6 +131,14 @@ function stopDenoWebAppService() {
     clients.forEach(c => c.close())
 }
 
+function hashString(str: string) {
+    let hash = 0
+    for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash)
+    }
+    return hash
+}
+
 const defaultDenoUIArgs = {
     appName: 'dui',
 
@@ -140,12 +153,17 @@ const defaultDenoUIArgs = {
 
     // the app mode has separate window frame
     // note that it's currently only supported on Windows
-    appMode: true,
+    appMode: false,
+
+    // close the server when no clients connected
+    // It will follow the appMode setting by default
+    closeWhenNoClients: false,
 
     frontendRoot: '.',
+    resourceRoot: '.',
     entryPoint: 'index.html',
-    apiPort: 22312,
-    webPort: 5173,
+    apiPort: 0,
+    webPort: 0,
 
     // this won't take effect when `release` is false
     memoryAssets: {} as Record<string, string>,
@@ -156,18 +174,30 @@ const defaultDenoUIArgs = {
 export type DenoUIArgs = typeof defaultDenoUIArgs
 
 export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
-    const args = {...defaultDenoUIArgs, ...options}
+    const runtimeArgsFix = {
+        closeWhenNoClients: (options.appMode === true) ? true : false
+    }
+    const args = {...defaultDenoUIArgs, ...runtimeArgsFix, ...options}
 
     appName = args.appName
 
     let appMode = Deno.build.os === 'windows'? args.appMode : false
+
+    if (args.apiPort === 0) {
+        // get default api port by hash of app name
+        args.apiPort = 3000 + (Math.abs(hashString(`${appName} api`)) % 1000)
+    }
+    if (args.webPort === 0) {
+        // get default web port by hash of app name
+        args.webPort = 4000 + (Math.abs(hashString(`${appName} web`)) % 1000)
+    }
 
     // try different ports if the default one is already in use
     let apiPort = args.apiPort
     let backend : Deno.HttpServer | null = null
     for (let i = 0; i < 10; i++) {
         try {
-            backend = startDenoWebAppService(args.frontendRoot, apiPort, args.apiImpl, args.memoryAssets);
+            backend = startDenoWebAppService(args.resourceRoot, apiPort, args.apiImpl, args.memoryAssets, args.closeWhenNoClients);
             break
         } catch (_e) {
             apiPort++
