@@ -10,7 +10,6 @@ export function createMemoryAssets(files: {name:string, path:string}[], assetsFi
 }
 
 export function saveMemoryAssets(assets: Record<string, string>, root: string) {
-  Deno.mkdirSync(root)
   for (const [name, data] of Object.entries(assets)) {
     const filePath = root + '/' + name
     fs.ensureDirSync(path.dirname(filePath))
