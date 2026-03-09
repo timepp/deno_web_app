@@ -1,0 +1,17 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "deno",
+            "command": "run",
+            "problemMatcher": [
+                "$deno"
+            ],
+            "args": [
+                "--allow-all",
+                "app.ts"
+            ],
+            "label": "🚀 Launch App"
+        }
+    ]
+}

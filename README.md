@@ -73,6 +73,18 @@ const networkInfo = await api.getNetworkInfo('')
 
 `startDenoUI` will start the http server, websocket server and launch browser to navigate to the corresponding web address.
 
+### Platform support
+
+The generated app can run without any change on Windows.
+In other OS you need to provide the path to the browser executable when calling `startDenoUI`, e.g.:
+
+```typescript
+denoUI.startDenoUI({
+    browser: '/usr/bin/google-chrome-stable',
+    ...
+})
+```
+
 ### hosting your app in jsr
 
 You can publish your app to JSR so that it can be run without installation.
@@ -97,14 +109,14 @@ API invoking is done by websocket message. Websocket is also used to prove prese
 - If the backend is killed, the frontend will close as well.
 - If there is no frontend connected, the backend will exit as well (after a short delay).
 
-## Platform support
+## Development
 
-The generated app can run without any change on Windows.
-In other OS you need to provide the path to the browser executable when calling `startDenoUI`, e.g.:
+### Step to publish changes
 
-```typescript
-denoUI.startDenoUI({
-    browser: '/usr/bin/google-chrome-stable',
-    ...
-})
-```
+1. run `deno run -A build.ts` to update bootstrap files if there is any change in the sample-app folder
+
+2. upgrade version in `jsr.json`
+
+3. commit & push changes
+
+4. run `deno publish`

@@ -10,7 +10,8 @@ const bootstrapFiles = [
     'app.ts',
     'build-release-assets.ts',
     'release-assets.ts',
-    '.vscode/settings.json'
+    '.vscode/settings.json',
+    '.vscode/tasks.json'
 ]
 
 const files = bootstrapFiles.map(f => {
