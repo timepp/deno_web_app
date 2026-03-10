@@ -1,6 +1,10 @@
 let ws: WebSocket | null = null
 let requestID = 100
 const pendingPromises = new Map<number, (value: any) => void>()
+const streamSubscribers = new Map<string, {
+    onData: (data: string) => void,
+    onComplete: () => void
+}>()
 
 let windowPlacement = [0, 0, 0, 0]
 // Since browser won't remember app window placement, we need to save it in the app
@@ -32,9 +36,31 @@ export async function getWebSocket(): Promise<WebSocket> {
             // close() 
         }
         ws.onmessage = e => {
-            const { id, result } = JSON.parse(e.data)
-            pendingPromises.get(id)!(result)
-            pendingPromises.delete(id)
+            const message = JSON.parse(e.data)
+            
+            // Handle stream messages
+            if (message.type === 'stream') {
+                const { sessionId, data, done } = message
+                const subscriber = streamSubscribers.get(sessionId)
+                if (subscriber) {
+                    if (data) {
+                        subscriber.onData(data)
+                    }
+                    if (done) {
+                        subscriber.onComplete()
+                        streamSubscribers.delete(sessionId)
+                    }
+                }
+                return
+            }
+            
+            // Handle RPC response messages
+            const { id, result } = message
+            const resolver = pendingPromises.get(id)
+            if (resolver) {
+                resolver(result)
+                pendingPromises.delete(id)
+            }
         }
         await new Promise(resolve => ws!.onopen = resolve)
     }
@@ -50,4 +76,18 @@ export async function callAPI(args: IArguments, cmd?: string): Promise<unknown> 
     const ws = await getWebSocket()
     ws.send(JSON.stringify({ id: ++requestID, cmd, args: [...args] }))
     return new Promise(resolve => pendingPromises.set(requestID, resolve))
+}
+
+// Subscribe to a stream session
+export function subscribeToStream(
+    sessionId: string,
+    onData: (data: string) => void,
+    onComplete: () => void
+) {
+    streamSubscribers.set(sessionId, { onData, onComplete })
+}
+
+// Unsubscribe from a stream session
+export function unsubscribeFromStream(sessionId: string) {
+    streamSubscribers.delete(sessionId)
 }

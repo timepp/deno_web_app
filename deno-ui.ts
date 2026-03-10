@@ -4,6 +4,7 @@ import { extname } from 'jsr:@std/path@1.0.0'
 import * as enc from 'jsr:@std/encoding@1.0.1'
 import { changeWindowSize } from './change-window-size.ts'
 import * as so from "jsr:@lambdalisue/systemopen@1.0.0";
+import { registerSession, isSessionId } from './session-registry.ts'
 
 const clients: WebSocket[] = []
 let server: Deno.HttpServer | null = null
@@ -52,6 +53,12 @@ function startDenoWebAppService(root: string, port: number, apiImpl: {[key: stri
                     if (cmd in apiImpl) {
                         const func = apiImpl[cmd as keyof typeof apiImpl]
                         result = await func.apply(apiImpl, args)
+                        
+                        // If the result is a session ID, register it with this socket
+                        if (isSessionId(result)) {
+                            registerSession(result, socket)
+                            console.log(`Registered session ${result} for client`)
+                        }
                     }
                     // console.log('sending response:', result)
                     socket.send(JSON.stringify({id, result}))

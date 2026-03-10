@@ -14,6 +14,10 @@ export type NetworkInfo = {
 export const api = {
     getNetworkInfo: async function (name: string) {
         return await callAPI(arguments) as NetworkInfo[]
+    },
+    runCommandAndCaptureOutput: async function (command: string, args: string[]) {
+        // Returns a session ID for streaming output
+        return await callAPI(arguments) as string
     }
 }
 
