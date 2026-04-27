@@ -1,6 +1,6 @@
 {
     "name": "@timepp/dui",
-    "version": "0.1.13", 
+    "version": "0.1.14", 
     "exports": {
         ".": "./index.ts",
         "./demo": "./sample-app/app.ts"

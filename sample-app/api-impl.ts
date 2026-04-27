@@ -10,7 +10,7 @@ export const apiImpl: BackendAPI = {
     runCommandAndCaptureOutput: async function (command: string, args: string[]) {
         // Generate a unique session ID
         const randomPart = Math.random().toString(36).slice(2, 11)
-        const sessionId = `cmd-${Date.now()}-${randomPart}`
+        const sessionId = `cmd-${Date.now()}-${randomPart}`;
         
         // Start the command execution asynchronously
         (async () => {
