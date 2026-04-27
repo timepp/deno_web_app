@@ -3,6 +3,7 @@ import {typeByExtension} from 'jsr:@std/media-types@1.0.1'
 import { extname } from 'jsr:@std/path@1.0.0'
 import * as enc from 'jsr:@std/encoding@1.0.1'
 import { changeWindowSize } from './change-window-size.ts'
+import { activateWindow } from './activate-window.ts'
 import * as so from "jsr:@lambdalisue/systemopen@1.0.0";
 import { registerSession, isSessionId } from './session-registry.ts'
 
@@ -97,6 +98,13 @@ function startDenoWebAppService(root: string, port: number, apiImpl: {[key: stri
     const handler = async (req: Request) => {
         let path = new URL(req.url).pathname;
     
+        // Health check endpoint for single instance detection
+        if (path === "/_health") {
+            return new Response(JSON.stringify({ appName }), {
+                headers: { "content-type": "application/json" }
+            });
+        }
+    
         if(path == "/"){
             path = `/index.html`;
         }
@@ -144,6 +152,23 @@ function hashString(str: string) {
         hash = str.charCodeAt(i) + ((hash << 5) - hash)
     }
     return hash
+}
+
+// Check if the same app instance is already running on the given port
+async function checkSameAppRunning(port: number, expectedAppName: string): Promise<boolean> {
+    try {
+        const response = await fetch(`http://localhost:${port}/_health`, {
+            method: 'GET',
+            signal: AbortSignal.timeout(1000)
+        })
+        if (response.ok) {
+            const data = await response.json()
+            return data.appName === expectedAppName
+        }
+        return false
+    } catch {
+        return false
+    }
 }
 
 const defaultDenoUIArgs = {
@@ -199,20 +224,36 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
         args.webPort = 4000 + (Math.abs(hashString(`${appName} web`)) % 1000)
     }
 
-    // try different ports if the default one is already in use
+    // Try different ports if the default one is already in use
     let apiPort = args.apiPort
     let backend : Deno.HttpServer | null = null
     for (let i = 0; i < 10; i++) {
+        // Check if the same app instance is already running on this port (single instance mode)
+        if (appMode) {
+            const isSameAppRunning = await checkSameAppRunning(apiPort, appName)
+            if (isSameAppRunning) {
+                console.log(`${appName} is already running on port ${apiPort}, activating existing window...`)
+                if (activateWindow(appName)) {
+                    console.log('Existing window activated successfully')
+                } else {
+                    console.log('Could not activate window, but instance is running')
+                }
+                Deno.exit(0)
+            }
+        }
+        
         try {
             backend = startDenoWebAppService(args.resourceRoot, apiPort, args.apiImpl, args.memoryAssets, args.closeWhenNoClients);
+            console.log(`Backend server started on port ${apiPort}`)
             break
-        } catch (_e) {
+        } catch (e) {
+            console.log(`Port ${apiPort} is in use by another app, trying next port...`)
             apiPort++
         }
     }
 
     if (!backend) {
-        console.error('could not start backend')
+        console.error('Could not start backend - all ports are in use')
         Deno.exit(1)
     }
     
