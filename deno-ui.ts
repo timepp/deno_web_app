@@ -12,6 +12,12 @@ let server: Deno.HttpServer | null = null
 const ac = new AbortController()
 let appName = 'dui'
 
+export type APIImplementation = Record<string, unknown>
+
+function isErrorWithCode(e: unknown): e is { code: string } {
+    return typeof e === 'object' && e !== null && 'code' in e && typeof (e as { code: unknown }).code === 'string'
+}
+
 function saveWindowPlacement(x: number, y: number, width: number, height: number) {
     // filter out invalid values (e.g. when the window is minimized)
     if (x < 0 || y < 0 || width <= 0 || height <= 0) {
@@ -36,12 +42,12 @@ function loadWindowPlacement() {
     }
 }
 
-function startDenoWebAppService(root: string, port: number, apiImpl: {[key: string]: Function}, memoryAssets: Record<string, string> = {}, closeWhenNoClients = false): Deno.HttpServer {
+function startDenoWebAppService(root: string, port: number, apiImpl: APIImplementation, memoryAssets: Record<string, string> = {}, closeWhenNoClients = false): Deno.HttpServer {
     const handlerCORS = async (req: Request) => {
         // handle websocket connection
         if (req.headers.get("upgrade") === "websocket") {
             const { socket, response } = Deno.upgradeWebSocket(req);
-            let closeTimer = 0
+            let closeTimer: ReturnType<typeof setTimeout> | undefined
             socket.onopen = () => {
                 clients.push(socket)
                 console.log("socket opened, total clients:", clients.length);
@@ -58,10 +64,12 @@ function startDenoWebAppService(root: string, port: number, apiImpl: {[key: stri
                     return
                 }
                 try {
-                    let result = `unknown command: ${cmd}`
+                    let result: unknown = `unknown command: ${cmd}`
                     if (cmd in apiImpl) {
                         const func = apiImpl[cmd as keyof typeof apiImpl]
-                        result = await func.apply(apiImpl, args)
+                        if (typeof func === 'function') {
+                            result = await func.apply(apiImpl, args)
+                        }
                         
                         // If the result is a session ID, register it with this socket
                         if (isSessionId(result)) {
@@ -137,8 +145,8 @@ function startDenoWebAppService(root: string, port: number, apiImpl: {[key: stri
                     "Cache-Control": "public, max-age=31536000, immutable"
                 }
             });
-        } catch(e){
-            if((e as any).code === "ENOENT"){
+        } catch (e) {
+            if (isErrorWithCode(e) && e.code === "ENOENT") {
                 // check from static assets
                 return new Response("Not Found", { status: 404 });
             }
@@ -179,61 +187,139 @@ async function checkSameAppRunning(port: number, expectedAppName: string): Promi
     }
 }
 
-const defaultDenoUIArgs = {
+/**
+ * Full startup configuration for Deno UI.
+ */
+export interface DenoUIArgs {
+    /**
+     * App identity used for single-instance detection and persisted window placement file name.
+     * @default "dui"
+     */
+    appName: string
+
+    /**
+     * `true`: serve built frontend assets from Deno server.
+     * `false`: use Vite dev server (local development).
+     * Set to `true` for release packaging (for example JSR distribution).
+     * @default false
+     */
+    release: boolean
+
+    /**
+     * Browser executable to launch. Supports `msedge`, `chrome`, or an absolute executable path.
+     * Falls back to system default browser if launch fails.
+     * @default "chrome"
+     */
+    browser: string
+
+    /**
+     * Browser profile to use. Set it to empty string to use the last used profile.
+     * @default 'Default'
+     */
+    browserProfile: string
+
+    /**
+     * Launch in app window mode (`--app=` style).
+     * Currently supported on Windows only.
+     * @default false
+     */
+    appMode: boolean
+
+    /**
+     * Whether to stop the backend server when no websocket clients remain.
+     * If omitted by caller, runtime defaults to `true` when `appMode` is `true`, otherwise `false`.
+     * @default true if `appMode` is `true`, otherwise `false`
+     */
+    closeWhenNoClients: boolean
+
+    /**
+     * Frontend project root (used by Vite in non-release mode).
+     * @default "."
+     */
+    frontendRoot: string
+
+    /**
+     * Static resource root used by Deno file hosting.
+     * @default "."
+     */
+    resourceRoot: string
+
+    /**
+     * Frontend entry file path, relative to frontend root.
+     * @default "index.html"
+     */
+    entryPoint: string
+
+    /**
+     * Backend API port.
+     * Use `0` to auto-generate a stable default based on app name.
+     * @default 0
+     */
+    apiPort: number
+
+    /**
+     * Frontend web port (Vite in dev mode).
+     * Use `0` to auto-generate a stable default based on app name.
+     * @default 0
+     */
+    webPort: number
+
+    /**
+     * Embedded static assets (base64 content), used only when `release` is `true`.
+     * @default {}
+     */
+    memoryAssets: Record<string, string>
+
+    /**
+     * Backend RPC API implementation object.
+     * Keys are command names and values are callable handlers.
+     * @default {}
+     */
+    apiImpl: APIImplementation
+}
+
+const defaultDenoUIArgs: DenoUIArgs = {
     appName: 'dui',
-
-    // true: hosting the built frontend code (pure html/js/css) in deno; need to build the frontend first
-    // false: hosting the frontend code in vite (for local development)
-    // this need to be true when deploying the app to jsr
     release: false,
-
-    // msedge,chrome, or other browser path
-    // if browser is not found, it will open with the default browser
     browser: 'chrome',
-
-    // the app mode has separate window frame
-    // note that it's currently only supported on Windows
+    browserProfile: 'Default',
     appMode: false,
-
-    // close the server when no clients connected
-    // It will follow the appMode setting by default
     closeWhenNoClients: false,
-
     frontendRoot: '.',
     resourceRoot: '.',
     entryPoint: 'index.html',
     apiPort: 0,
     webPort: 0,
-
-    // this won't take effect when `release` is false
-    memoryAssets: {} as Record<string, string>,
-
-    apiImpl: {} as {[key: string]: Function},
+    memoryAssets: {},
+    apiImpl: {},
 }
 
-export type DenoUIArgs = typeof defaultDenoUIArgs
-
+/**
+ * Start Deno UI with optional overrides.
+ *
+ * Type a literal object for `options` to get full IntelliSense for all fields in {@link DenoUIArgs}.
+ */
 export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     const runtimeArgsFix = {
         closeWhenNoClients: (options.appMode === true) ? true : false
     }
-    const args = {...defaultDenoUIArgs, ...runtimeArgsFix, ...options}
+    const cfg = {...defaultDenoUIArgs, ...runtimeArgsFix, ...options}
 
-    appName = args.appName
+    appName = cfg.appName
 
-    let appMode = Deno.build.os === 'windows'? args.appMode : false
+    let appMode = Deno.build.os === 'windows'? cfg.appMode : false
 
-    if (args.apiPort === 0) {
+    if (cfg.apiPort === 0) {
         // get default api port by hash of app name
-        args.apiPort = 3000 + (Math.abs(hashString(`${appName} api`)) % 1000)
+        cfg.apiPort = 3000 + (Math.abs(hashString(`${appName} api`)) % 1000)
     }
-    if (args.webPort === 0) {
+    if (cfg.webPort === 0) {
         // get default web port by hash of app name
-        args.webPort = 4000 + (Math.abs(hashString(`${appName} web`)) % 1000)
+        cfg.webPort = 4000 + (Math.abs(hashString(`${appName} web`)) % 1000)
     }
 
     // Try different ports if the default one is already in use
-    let apiPort = args.apiPort
+    let apiPort = cfg.apiPort
     let backend : Deno.HttpServer | null = null
     for (let i = 0; i < 10; i++) {
         // Check if the same app instance is already running on this port (single instance mode)
@@ -251,10 +337,10 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
         }
         
         try {
-            backend = startDenoWebAppService(args.resourceRoot, apiPort, args.apiImpl, args.memoryAssets, args.closeWhenNoClients);
+            backend = startDenoWebAppService(cfg.resourceRoot, apiPort, cfg.apiImpl, cfg.memoryAssets, cfg.closeWhenNoClients);
             console.log(`Backend server started on port ${apiPort}`)
             break
-        } catch (e) {
+        } catch (_e) {
             console.log(`Port ${apiPort} is in use by another app, trying next port...`)
             apiPort++
         }
@@ -268,12 +354,12 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     let webPort = apiPort
     let frontend: vite.ViteDevServer | null = null
     // Use Vite for local development
-    if (!args.release) {
+    if (!cfg.release) {
         console.log('starting vite frontend server')
         frontend = await vite.createServer({
-            root: args.frontendRoot
+            root: cfg.frontendRoot
         })
-        webPort = args.webPort
+        webPort = cfg.webPort
         frontend.listen(webPort)
     }
     
@@ -287,15 +373,19 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
         'chrome'
     ]
     const appModeParam = appMode? '&_saveWindow' : ''
-    const url = `http://localhost:${webPort}/${args.entryPoint}?_apiPort=${apiPort}${appModeParam}`
-    const browsers = args.browser === 'edge'? edge : args.browser === 'chrome'? chrome : args.browser? [args.browser] : [...chrome, ...edge]
+    const url = `http://localhost:${webPort}/${cfg.entryPoint}?_apiPort=${apiPort}${appModeParam}`
+    const browsers = cfg.browser === 'edge'? edge : cfg.browser === 'chrome'? chrome : cfg.browser? [cfg.browser] : [...chrome, ...edge]
     let cp: Deno.ChildProcess | null = null
 
     for (const browser of browsers) {
         console.log('trying to start browser:', browser)
         try {
             const urlArg = appMode? `--app=${url}` : url
-            const cmd = new Deno.Command(browser, { args: [urlArg] })
+            const args = [urlArg]
+            if (cfg.browserProfile) {
+                args.push(`--profile-directory=${cfg.browserProfile}`)
+            }
+            const cmd = new Deno.Command(browser, { args })
             cp = cmd.spawn()
             break
         } catch (e) {
