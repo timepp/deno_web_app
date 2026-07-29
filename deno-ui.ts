@@ -13,6 +13,10 @@ const ac = new AbortController()
 let appName = 'dui'
 
 function saveWindowPlacement(x: number, y: number, width: number, height: number) {
+    // filter out invalid values (e.g. when the window is minimized)
+    if (x < 0 || y < 0 || width <= 0 || height <= 0) {
+        return
+    }
     const data = {x, y, width, height}
     const path = Deno.env.get('APPDATA') + '/' + appName + '-window.json'
     Deno.writeTextFileSync(path, JSON.stringify(data))
@@ -22,6 +26,10 @@ function loadWindowPlacement() {
     const path = Deno.env.get('APPDATA') + '/' + appName + '-window.json'
     try {
         const data = JSON.parse(Deno.readTextFileSync(path))
+        // fix invalid values
+        if (data.x < 0 || data.y < 0 || data.width <= 0 || data.height <= 0) {
+            return null
+        }
         return data
     } catch {
         return null
