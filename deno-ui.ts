@@ -6,13 +6,15 @@ import { changeWindowSize } from './change-window-size.ts'
 import { activateWindow } from './activate-window.ts'
 import * as so from "jsr:@lambdalisue/systemopen@1.0.0";
 import { registerSession, isSessionId } from './session-registry.ts'
+import * as tu from "jsr:@timepp/uu@1.0.6"
 
 const clients: WebSocket[] = []
 let server: Deno.HttpServer | null = null
 const ac = new AbortController()
 let appName = 'dui'
 
-export type APIImplementation = Record<string, unknown>
+export type APIHandler = (...args: any[]) => unknown | Promise<unknown>
+export type APIImplementation = Record<string, APIHandler>
 
 function isErrorWithCode(e: unknown): e is { code: string } {
     return typeof e === 'object' && e !== null && 'code' in e && typeof (e as { code: unknown }).code === 'string'
@@ -55,7 +57,8 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
             }
             socket.onmessage = async (e) => {
                 const {id, cmd, args} = JSON.parse(e.data)
-                console.log('received command:', cmd)
+                const argsStr = JSON.stringify(args)
+                console.log('received command:', cmd, 'args:', tu.foldString(argsStr, 320))
                 if (id === 0) {
                     // system message to update window size and position
                     const [x, y, width, height] = args
@@ -67,9 +70,7 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
                     let result: unknown = `unknown command: ${cmd}`
                     if (cmd in apiImpl) {
                         const func = apiImpl[cmd as keyof typeof apiImpl]
-                        if (typeof func === 'function') {
-                            result = await func.apply(apiImpl, args)
-                        }
+                        result = await func.apply(apiImpl, args)
                         
                         // If the result is a session ID, register it with this socket
                         if (isSessionId(result)) {
