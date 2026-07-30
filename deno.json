@@ -1,3 +1,10 @@
 {
+    "name": "@timepp/dui",
+    "version": "0.1.16",
+    "exports": {
+        ".": "./index.ts",
+        "./demo": "./sample-app/app.ts"
+    },
+    "license": "MIT",
     "minimumDependencyAge": 0
 }
