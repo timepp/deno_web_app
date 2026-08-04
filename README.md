@@ -73,6 +73,10 @@ const networkInfo = await api.getNetworkInfo('')
 
 `startDenoUI` will start the http server, websocket server and launch browser to navigate to the corresponding web address.
 
+### Security model
+
+Deno UI binds its HTTP and WebSocket servers to `127.0.0.1`. Each launch uses a cryptographically random session token, and WebSocket upgrades require both that token and the exact frontend Origin. This protects the RPC channel from LAN access and cross-site WebSocket requests.
+
 ### Platform support
 
 The generated app can run without any change on Windows.

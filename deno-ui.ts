@@ -1,11 +1,11 @@
 import * as vite from 'npm:vite@6.3.5'
 import {typeByExtension} from 'jsr:@std/media-types@1.0.1'
-import { extname } from 'jsr:@std/path@1.0.0'
+import { extname, isAbsolute, relative, resolve } from 'jsr:@std/path@1.0.0'
 import * as enc from 'jsr:@std/encoding@1.0.1'
 import { changeWindowSize } from './change-window-size.ts'
 import { activateWindow } from './activate-window.ts'
 import * as so from "jsr:@lambdalisue/systemopen@1.0.0";
-import { registerSession, isSessionId } from './session-registry.ts'
+import { registerSession, isSessionId, unregisterSessionsForClient } from './session-registry.ts'
 import * as tu from "jsr:@timepp/uu@1.0.6"
 
 const clients: WebSocket[] = []
@@ -25,13 +25,21 @@ function saveWindowPlacement(x: number, y: number, width: number, height: number
     if (x < 0 || y < 0 || width <= 0 || height <= 0) {
         return
     }
+    const appData = Deno.env.get('APPDATA')
+    if (!appData) {
+        return
+    }
     const data = {x, y, width, height}
-    const path = Deno.env.get('APPDATA') + '/' + appName + '-window.json'
+    const path = appData + '/' + appName + '-window.json'
     Deno.writeTextFileSync(path, JSON.stringify(data))
 }
 
 function loadWindowPlacement() {
-    const path = Deno.env.get('APPDATA') + '/' + appName + '-window.json'
+    const appData = Deno.env.get('APPDATA')
+    if (!appData) {
+        return null
+    }
+    const path = appData + '/' + appName + '-window.json'
     try {
         const data = JSON.parse(Deno.readTextFileSync(path))
         // fix invalid values
@@ -44,31 +52,69 @@ function loadWindowPlacement() {
     }
 }
 
-function startDenoWebAppService(root: string, port: number, apiImpl: APIImplementation, memoryAssets: Record<string, string> = {}, closeWhenNoClients = false): Deno.HttpServer {
+function startDenoWebAppService(root: string, port: number, apiImpl: APIImplementation, memoryAssets: Record<string, string>, closeWhenNoClients: boolean, sessionToken: string, allowedOrigin: string): Deno.HttpServer {
     const handlerCORS = async (req: Request) => {
         // handle websocket connection
         if (req.headers.get("upgrade") === "websocket") {
+            const requestUrl = new URL(req.url)
+            if (requestUrl.pathname !== '/_dui/ws' ||
+                requestUrl.searchParams.get('token') !== sessionToken ||
+                req.headers.get('origin') !== allowedOrigin) {
+                return new Response('Forbidden', {status: 403})
+            }
             const { socket, response } = Deno.upgradeWebSocket(req);
             let closeTimer: ReturnType<typeof setTimeout> | undefined
+            let activeRequests = 0
             socket.onopen = () => {
+                if (clients.length >= 8) {
+                    socket.close(1013, 'Too many connections')
+                    return
+                }
                 clients.push(socket)
                 console.log("socket opened, total clients:", clients.length);
                 clearTimeout(closeTimer)
             }
             socket.onmessage = async (e) => {
-                const {id, cmd, args} = JSON.parse(e.data)
-                const argsStr = JSON.stringify(args)
-                console.log('received command:', cmd, 'args:', tu.foldString(argsStr, 320))
+                if (typeof e.data !== 'string' || e.data.length > 1024 * 1024) {
+                    socket.close(1008, 'Invalid RPC message')
+                    return
+                }
+                let message: unknown
+                try {
+                    message = JSON.parse(e.data)
+                } catch {
+                    socket.close(1008, 'Invalid RPC message')
+                    return
+                }
+                if (typeof message !== 'object' || message === null) {
+                    socket.close(1008, 'Invalid RPC message')
+                    return
+                }
+                const {id, cmd, args} = message as Record<string, unknown>
+                if (!Number.isSafeInteger(id) || typeof cmd !== 'string' || !Array.isArray(args)) {
+                    socket.close(1008, 'Invalid RPC message')
+                    return
+                }
+                if (activeRequests >= 32) {
+                    socket.send(JSON.stringify({id, result: 'Too many pending API commands'}))
+                    return
+                }
+                console.log('received command:', tu.foldString(cmd, 120))
                 if (id === 0) {
                     // system message to update window size and position
                     const [x, y, width, height] = args
+                    if (![x, y, width, height].every(value => typeof value === 'number' && Number.isFinite(value))) {
+                        socket.close(1008, 'Invalid window placement')
+                        return
+                    }
                     // save the information in a file under user data directory
-                    saveWindowPlacement(x, y, width, height)
+                    saveWindowPlacement(x as number, y as number, width as number, height as number)
                     return
                 }
+                activeRequests++
                 try {
                     let result: unknown = `unknown command: ${cmd}`
-                    if (cmd in apiImpl) {
+                    if (Object.hasOwn(apiImpl, cmd) && typeof apiImpl[cmd] === 'function') {
                         const func = apiImpl[cmd as keyof typeof apiImpl]
                         result = await func.apply(apiImpl, args)
                         
@@ -82,7 +128,9 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
                     socket.send(JSON.stringify({id, result}))
                 } catch (_e) {
                     console.error(_e)
-                    socket.send(JSON.stringify({id, result:`error: ${_e}`}))
+                    socket.send(JSON.stringify({id, result: 'API command failed'}))
+                } finally {
+                    activeRequests--
                 }
             }
             socket.onclose = () => {
@@ -91,6 +139,7 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
                 if (i >= 0) {
                     clients.splice(i, 1)
                 }
+                unregisterSessionsForClient(socket)
                 console.log("socket closed, total clients:", clients.length);
                 clearTimeout(closeTimer)
                 if (clients.length === 0 && closeWhenNoClients) {
@@ -109,7 +158,6 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
         }
 
         const response = await handler(req);
-        response.headers.set("Access-Control-Allow-Origin", "*");
         return response;
     }
     const handler = async (req: Request) => {
@@ -127,17 +175,22 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
         }
         try {
             console.log('serving', path)
-            const relativePath = path.slice(1)
-            if (relativePath in memoryAssets) {
-                console.log('serving from assets', relativePath)
-                const content = enc.decodeBase64(memoryAssets[relativePath])
+            const assetPath = path.slice(1)
+            if (Object.hasOwn(memoryAssets, assetPath)) {
+                console.log('serving from assets', assetPath)
+                const content = enc.decodeBase64(memoryAssets[assetPath])
                 return new Response(new Uint8Array(content).buffer, {
                     headers: {
                         "content-type" : typeByExtension(extname(path)) || "text/plain"
                     }
                 });
             }
-            const filePath = root + decodeURIComponent(path);
+            const rootPath = await Deno.realPath(root)
+            const filePath = await Deno.realPath(resolve(rootPath, `.${decodeURIComponent(path)}`))
+            const fileRelativePath = relative(rootPath, filePath)
+            if (fileRelativePath === '..' || fileRelativePath.startsWith('../') || fileRelativePath.startsWith('..\\') || isAbsolute(fileRelativePath)) {
+                return new Response("Not Found", { status: 404 });
+            }
             console.log('loading file from disk:', filePath)
             const file = await Deno.open(filePath, { read: true });
             return new Response(file.readable, {
@@ -155,7 +208,7 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
         }
     };
     
-    server = Deno.serve({ port, signal:ac.signal }, handlerCORS);
+    server = Deno.serve({ hostname: '127.0.0.1', port, signal:ac.signal }, handlerCORS);
     return server
 }
 
@@ -169,6 +222,11 @@ function hashString(str: string) {
         hash = str.charCodeAt(i) + ((hash << 5) - hash)
     }
     return hash
+}
+
+function createSessionToken() {
+    const bytes = crypto.getRandomValues(new Uint8Array(32))
+    return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
 // Check if the same app instance is already running on the given port
@@ -322,6 +380,7 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     // Try different ports if the default one is already in use
     let apiPort = cfg.apiPort
     let backend : Deno.HttpServer | null = null
+    const sessionToken = createSessionToken()
     for (let i = 0; i < 10; i++) {
         // Check if the same app instance is already running on this port (single instance mode)
         if (appMode) {
@@ -338,7 +397,9 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
         }
         
         try {
-            backend = startDenoWebAppService(cfg.resourceRoot, apiPort, cfg.apiImpl, cfg.memoryAssets, cfg.closeWhenNoClients);
+            const frontendPort = cfg.release ? apiPort : cfg.webPort
+            const allowedOrigin = `http://localhost:${frontendPort}`
+            backend = startDenoWebAppService(cfg.resourceRoot, apiPort, cfg.apiImpl, cfg.memoryAssets, cfg.closeWhenNoClients, sessionToken, allowedOrigin);
             console.log(`Backend server started on port ${apiPort}`)
             break
         } catch (_e) {
@@ -358,7 +419,11 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     if (!cfg.release) {
         console.log('starting vite frontend server')
         frontend = await vite.createServer({
-            root: cfg.frontendRoot
+            root: cfg.frontendRoot,
+            server: {
+                host: '127.0.0.1',
+                strictPort: true
+            }
         })
         webPort = cfg.webPort
         frontend.listen(webPort)
@@ -374,7 +439,7 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
         'chrome'
     ]
     const appModeParam = appMode? '&_saveWindow' : ''
-    const url = `http://localhost:${webPort}/${cfg.entryPoint}?_apiPort=${apiPort}${appModeParam}`
+    const url = `http://localhost:${webPort}/${cfg.entryPoint}?_apiPort=${apiPort}&_duiToken=${sessionToken}${appModeParam}`
     const browsers = cfg.browser === 'edge'? edge : cfg.browser === 'chrome'? chrome : cfg.browser? [cfg.browser] : [...chrome, ...edge]
     let cp: Deno.ChildProcess | null = null
 

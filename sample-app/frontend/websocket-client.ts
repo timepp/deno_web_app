@@ -5,6 +5,20 @@ const streamSubscribers = new Map<string, {
     onData: (data: string) => void,
     onComplete: () => void
 }>()
+const startupParams = new URLSearchParams(window.location.search)
+const browserWindow = window as unknown as {
+    history: {state: unknown, replaceState(data: unknown, unused: string, url: URL): void},
+    sessionStorage: {getItem(key: string): string | null, setItem(key: string, value: string): void}
+}
+const launchToken = startupParams.get('_duiToken')
+const sessionToken = launchToken ?? browserWindow.sessionStorage.getItem('_duiToken')
+
+if (launchToken) {
+    browserWindow.sessionStorage.setItem('_duiToken', launchToken)
+    const sanitizedUrl = new URL(window.location.href)
+    sanitizedUrl.searchParams.delete('_duiToken')
+    browserWindow.history.replaceState(browserWindow.history.state, '', sanitizedUrl)
+}
 
 let windowPlacement = [0, 0, 0, 0]
 // Since browser won't remember app window placement, we need to save it in the app
@@ -24,11 +38,13 @@ export async function getWebSocket(): Promise<WebSocket> {
     if (!ws) {
         const proto = window.location.protocol
         const host = window.location.hostname
-        const params = new URLSearchParams(window.location.search)
-        const port = params.get('_apiPort') || window.location.port || (proto === 'https:' ? '443' : '80')
-        const url = (proto === 'https:' ? 'wss:' : 'ws:') + '//' + host + ':' + port
+        const port = startupParams.get('_apiPort') || window.location.port || (proto === 'https:' ? '443' : '80')
+        if (!sessionToken) {
+            throw new Error('Missing Deno UI session token')
+        }
+        const url = (proto === 'https:' ? 'wss:' : 'ws:') + '//' + host + ':' + port + '/_dui/ws?token=' + encodeURIComponent(sessionToken)
         ws = new WebSocket(url)
-        if (params.get('_saveWindow') !== null) {
+        if (startupParams.get('_saveWindow') !== null) {
             setInterval(saveWindowPlacement, 1000);
         }
         ws.onclose = () => { 
