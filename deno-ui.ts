@@ -74,37 +74,46 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
                 console.log("socket opened, total clients:", clients.length);
                 clearTimeout(closeTimer)
             }
+            const closeSocketWithMessage = (message: string, code = 1008) => {
+                console.log('closing socket with error: ', message)
+                socket.close(code, message)
+            }
             socket.onmessage = async (e) => {
-                if (typeof e.data !== 'string' || e.data.length > 1024 * 1024) {
-                    socket.close(1008, 'Invalid RPC message')
+                if (typeof e.data !== 'string') {
+                    closeSocketWithMessage('Invalid RPC message, expected string')
                     return
                 }
+                if (e.data.length > 1000 * 1024 * 1024) {
+                    closeSocketWithMessage('Invalid RPC message: data too large')
+                    return
+                }
+
                 let message: unknown
                 try {
                     message = JSON.parse(e.data)
                 } catch {
-                    socket.close(1008, 'Invalid RPC message')
+                    closeSocketWithMessage('Invalid RPC message: not valid JSON')
                     return
                 }
                 if (typeof message !== 'object' || message === null) {
-                    socket.close(1008, 'Invalid RPC message')
+                    closeSocketWithMessage('Invalid RPC message: not an object')
                     return
                 }
                 const {id, cmd, args} = message as Record<string, unknown>
                 if (!Number.isSafeInteger(id) || typeof cmd !== 'string' || !Array.isArray(args)) {
-                    socket.close(1008, 'Invalid RPC message')
+                    closeSocketWithMessage('Invalid RPC message, expected {id: number, cmd: string, args: any[]}')
                     return
                 }
                 if (activeRequests >= 32) {
                     socket.send(JSON.stringify({id, result: 'Too many pending API commands'}))
                     return
                 }
-                console.log('received command:', tu.foldString(cmd, 120))
+                console.log(`received command: ${cmd}, args: `, tu.foldString(JSON.stringify(args), 120))
                 if (id === 0) {
                     // system message to update window size and position
                     const [x, y, width, height] = args
                     if (![x, y, width, height].every(value => typeof value === 'number' && Number.isFinite(value))) {
-                        socket.close(1008, 'Invalid window placement')
+                        closeSocketWithMessage('Invalid window placement values')
                         return
                     }
                     // save the information in a file under user data directory
