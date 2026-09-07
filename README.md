@@ -25,32 +25,24 @@ deno run -A jsr:@timepp/dui@0.1.4 create-app app1
 
 this will create an app in the new folder `app1`.
 
-### define API interfaces between the web frontend and the backend in `api.ts`
+### define the typed local API in `api.ts`
 
 ```typescript
-export const api = {
-    getNetworkInfo: async function (name: string) {
-        return await callAPI(arguments) as NetworkInfo[]
-    }
+import { createClient } from "jsr:@timepp/dui/client"
+
+export interface BackendAPI {
+    getNetworkInfo(name: string): Promise<NetworkInfo[]>
 }
 
-export type BackendAPI = typeof api
+export const api = createClient<BackendAPI>()
 ```
 
-Note that we follow the DRY principle whenever possible. Above code do the following at the same time:
-
-- Define the API interface: `getNetworkInfo (name: string) ... as NetworkInfo[]`
-- Implement the API at frontend: `return await callAPI(arguments)`
-- Derive the API for the backend: `export type BackendAPI = typeof api`
-
-All the major part of the API (signature, input params and return type) is written exactly once.
-
-You can add your APIs following the same pattern.
+`createClient` creates a type-safe proxy. WebSocket connection, request IDs and transport details are managed by Deno UI.
 
 ### implement API in `api_impl.ts`
 
 ```typescript
-import {api} from './api.ts'
+import type { BackendAPI } from './api.ts'
 
 export const apiImpl: BackendAPI = {
     getNetworkInfo: async function (name: string) {
@@ -60,7 +52,34 @@ export const apiImpl: BackendAPI = {
 }
 ```
 
-API name and signatures are written again here. **This is the only place where you need to repeat**.
+Using `BackendAPI` ensures that the local implementation matches the API available to the frontend.
+
+### start the application
+
+```typescript
+import { startDenoUI } from "jsr:@timepp/dui"
+import { apiImpl } from './api-impl.ts'
+
+await startDenoUI({
+    appName: 'dui-sample-app',
+    ui: new URL('./frontend/ui.ts', import.meta.url),
+    api: apiImpl
+})
+```
+
+When `ui` points to a TypeScript or JavaScript module, Deno UI generates the HTML shell, starts the local servers, establishes the frontend connection and launches the browser.
+
+An application that needs custom metadata, preload directives, a specific DOM skeleton, or other page-level behavior can provide HTML instead:
+
+```typescript
+await startDenoUI({
+    appName: 'dui-sample-app',
+    ui: new URL('./frontend/index.html', import.meta.url),
+    api: apiImpl
+})
+```
+
+In this mode Deno UI serves the supplied HTML as the page entry and does not generate or map a default HTML document. The HTML is responsible for loading the application module, for example `<script type="module" src="./ui.ts"></script>`.
 
 ### calling API in frontend code
 
@@ -108,7 +127,11 @@ While we can import remote code from JSR, importing static assets like HTML, CSS
 
 ### API invoking
 
-API invoking is done by websocket message. Websocket is also used to prove presence of the backend/frontend. The backend and frontend all together behaves as a single app:
+API invocation uses discriminated WebSocket messages. RPC requests use `rpc.request`, responses use `rpc.response`, and framework messages such as window placement have their own message types.
+
+Unknown methods and exceptions thrown by local API implementations reject the frontend promise with `RPCError`. Its `code` is `METHOD_NOT_FOUND`, `HANDLER_ERROR`, `TOO_MANY_REQUESTS`, or `SERIALIZATION_ERROR`, and its `message` contains the relevant details.
+
+WebSocket is also used to prove presence of the backend/frontend. The backend and frontend all together behaves as a single app:
 
 - If the backend is killed, the frontend will close as well.
 - If there is no frontend connected, the backend will exit as well (after a short delay).
@@ -117,9 +140,9 @@ API invoking is done by websocket message. Websocket is also used to prove prese
 
 ### Step to publish changes
 
-1. run `deno run -A build.ts` to update bootstrap files if there is any change in the sample-app folder
+1. run `deno run -A build.ts` to update bootstrap files if there is any change in the full sample folder
 
-2. upgrade version in `jsr.json`
+2. upgrade version in `deno.json`
 
 3. commit & push changes
 

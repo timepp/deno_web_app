@@ -1,20 +1,36 @@
 import * as vite from 'npm:vite@6.3.5'
 import {typeByExtension} from 'jsr:@std/media-types@1.0.1'
-import { extname, isAbsolute, relative, resolve } from 'jsr:@std/path@1.0.0'
+import { basename, dirname, extname, fromFileUrl, isAbsolute, relative, resolve } from 'jsr:@std/path@1.0.0'
 import * as enc from 'jsr:@std/encoding@1.0.1'
 import { changeWindowSize } from './change-window-size.ts'
 import { activateWindow } from './activate-window.ts'
 import * as so from "jsr:@lambdalisue/systemopen@1.0.0";
 import { registerSession, isSessionId, unregisterSessionsForClient } from './session-registry.ts'
 import * as tu from "jsr:@timepp/uu@1.0.6"
+import { createDenoUIHtml, denoUIClientPlugin, generatedHtmlPlugin } from './vite-support.ts'
 
 const clients: WebSocket[] = []
 let server: Deno.HttpServer | null = null
 const ac = new AbortController()
 let appName = 'dui'
 
-export type APIHandler = (...args: any[]) => unknown | Promise<unknown>
+export type APIHandler = (...args: unknown[]) => unknown | Promise<unknown>
 export type APIImplementation = Record<string, APIHandler>
+
+type RPCErrorCode = 'TOO_MANY_REQUESTS' | 'METHOD_NOT_FOUND' | 'HANDLER_ERROR' | 'SERIALIZATION_ERROR'
+
+function sendRPCError(socket: WebSocket, id: number, code: RPCErrorCode, message: string) {
+    console.error(`RPC Error [${code}]: ${message}`)
+    socket.send(JSON.stringify({
+        type: 'rpc.response',
+        id,
+        error: { code, message }
+    }))
+}
+
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error)
+}
 
 function isErrorWithCode(e: unknown): e is { code: string } {
     return typeof e === 'object' && e !== null && 'code' in e && typeof (e as { code: unknown }).code === 'string'
@@ -52,7 +68,7 @@ function loadWindowPlacement() {
     }
 }
 
-function startDenoWebAppService(root: string, port: number, apiImpl: APIImplementation, memoryAssets: Record<string, string>, closeWhenNoClients: boolean, sessionToken: string, allowedOrigin: string): Deno.HttpServer {
+function startDenoWebAppService(root: string, port: number, apiImpl: APIImplementation, memoryAssets: Record<string, string>, closeWhenNoClients: boolean, sessionToken: string, allowedOrigin: string, generatedHtml?: string): Deno.HttpServer {
     const handlerCORS = async (req: Request) => {
         // handle websocket connection
         if (req.headers.get("upgrade") === "websocket") {
@@ -99,45 +115,65 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
                     closeSocketWithMessage('Invalid RPC message: not an object')
                     return
                 }
-                const {id, cmd, args} = message as Record<string, unknown>
-                if (!Number.isSafeInteger(id) || typeof cmd !== 'string' || !Array.isArray(args)) {
-                    closeSocketWithMessage('Invalid RPC message, expected {id: number, cmd: string, args: any[]}')
+                const {type} = message as Record<string, unknown>
+                if (type === 'system.window-placement') {
+                    const {placement} = message as Record<string, unknown>
+                    if (!Array.isArray(placement) || placement.length !== 4 ||
+                        !placement.every(value => typeof value === 'number' && Number.isFinite(value))) {
+                        closeSocketWithMessage('Invalid window placement message')
+                        return
+                    }
+                    const [x, y, width, height] = placement as number[]
+                    saveWindowPlacement(x, y, width, height)
+                    return
+                }
+                if (type !== 'rpc.request') {
+                    closeSocketWithMessage('Invalid message type')
+                    return
+                }
+
+                const {id, method, params} = message as Record<string, unknown>
+                if (!Number.isSafeInteger(id) || typeof method !== 'string' || !Array.isArray(params)) {
+                    closeSocketWithMessage('Invalid RPC request, expected {type: "rpc.request", id: number, method: string, params: unknown[]}')
                     return
                 }
                 if (activeRequests >= 32) {
-                    socket.send(JSON.stringify({id, result: 'Too many pending API commands'}))
+                    sendRPCError(socket, id as number, 'TOO_MANY_REQUESTS', 'Too many pending API requests')
                     return
                 }
-                console.log(`received command: ${cmd}, args: `, tu.foldString(JSON.stringify(args), 120))
-                if (id === 0) {
-                    // system message to update window size and position
-                    const [x, y, width, height] = args
-                    if (![x, y, width, height].every(value => typeof value === 'number' && Number.isFinite(value))) {
-                        closeSocketWithMessage('Invalid window placement values')
-                        return
-                    }
-                    // save the information in a file under user data directory
-                    saveWindowPlacement(x as number, y as number, width as number, height as number)
+                console.log(`received method: ${method}, params: `, tu.foldString(JSON.stringify(params), 120))
+                if (!Object.hasOwn(apiImpl, method) || typeof apiImpl[method] !== 'function') {
+                    sendRPCError(socket, id as number, 'METHOD_NOT_FOUND', `Unknown API method: ${method}`)
                     return
                 }
+
                 activeRequests++
                 try {
-                    let result: unknown = `unknown command: ${cmd}`
-                    if (Object.hasOwn(apiImpl, cmd) && typeof apiImpl[cmd] === 'function') {
-                        const func = apiImpl[cmd as keyof typeof apiImpl]
-                        result = await func.apply(apiImpl, args)
-                        
-                        // If the result is a session ID, register it with this socket
-                        if (isSessionId(result)) {
-                            registerSession(result, socket)
-                            console.log(`Registered session ${result} for client`)
-                        }
+                    const func = apiImpl[method]
+                    let result: unknown
+                    try {
+                        result = await func.apply(apiImpl, params)
+                    } catch (error) {
+                        console.error(`API method ${method} failed:`, error)
+                        sendRPCError(socket, id as number, 'HANDLER_ERROR', getErrorMessage(error))
+                        return
                     }
-                    // console.log('sending response:', result)
-                    socket.send(JSON.stringify({id, result}))
-                } catch (_e) {
-                    console.error(_e)
-                    socket.send(JSON.stringify({id, result: 'API command failed'}))
+
+                    // If the result is a session ID, register it with this socket
+                    if (isSessionId(result)) {
+                        registerSession(result, socket)
+                        console.log(`Registered session ${result} for client`)
+                    }
+
+                    let response: string
+                    try {
+                        response = JSON.stringify({type: 'rpc.response', id, result})
+                    } catch (error) {
+                        console.error(`Failed to serialize result from API method ${method}:`, error)
+                        sendRPCError(socket, id as number, 'SERIALIZATION_ERROR', `Failed to serialize result from API method: ${method}`)
+                        return
+                    }
+                    socket.send(response)
                 } finally {
                     activeRequests--
                 }
@@ -179,8 +215,11 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
             });
         }
     
-        if(path == "/"){
-            path = `/index.html`;
+        if (path === "/") {
+            if (generatedHtml === undefined) {
+                return new Response("Not Found", { status: 404 })
+            }
+            path = `/index.html`
         }
         try {
             console.log('serving', path)
@@ -193,6 +232,11 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
                         "content-type" : typeByExtension(extname(path)) || "text/plain"
                     }
                 });
+            }
+            if (path === '/index.html' && generatedHtml !== undefined) {
+                return new Response(generatedHtml, {
+                    headers: { "content-type": "text/html; charset=utf-8" }
+                })
             }
             const rootPath = await Deno.realPath(root)
             const filePath = await Deno.realPath(resolve(rootPath, `.${decodeURIComponent(path)}`))
@@ -255,123 +299,60 @@ async function checkSameAppRunning(port: number, expectedAppName: string): Promi
     }
 }
 
-/**
- * Full startup configuration for Deno UI.
- */
-export interface DenoUIArgs {
-    /**
-     * App identity used for single-instance detection and persisted window placement file name.
-     * @default "dui"
-     */
-    appName: string
-
-    /**
-     * `true`: serve built frontend assets from Deno server.
-     * `false`: use Vite dev server (local development).
-     * Set to `true` for release packaging (for example JSR distribution).
-     * @default false
-     */
-    release: boolean
-
-    /**
-     * Browser executable to launch. Supports `msedge`, `chrome`, or an absolute executable path.
-     * Falls back to system default browser if launch fails.
-     * @default "chrome"
-     */
-    browser: string
-
-    /**
-     * Browser profile to use. Set it to empty string to use the last used profile.
-     * @default 'Default'
-     */
-    browserProfile: string
-
-    /**
-     * Launch in app window mode (`--app=` style).
-     * Currently supported on Windows only.
-     * @default false
-     */
-    appMode: boolean
-
-    /**
-     * Whether to stop the backend server when no websocket clients remain.
-     * If omitted by caller, runtime defaults to `true` when `appMode` is `true`, otherwise `false`.
-     * @default true if `appMode` is `true`, otherwise `false`
-     */
-    closeWhenNoClients: boolean
-
-    /**
-     * Frontend project root (used by Vite in non-release mode).
-     * @default "."
-     */
-    frontendRoot: string
-
-    /**
-     * Static resource root used by Deno file hosting.
-     * @default "."
-     */
-    resourceRoot: string
-
-    /**
-     * Frontend entry file path, relative to frontend root.
-     * @default "index.html"
-     */
-    entryPoint: string
-
-    /**
-     * Backend API port.
-     * Use `0` to auto-generate a stable default based on app name.
-     * @default 0
-     */
-    apiPort: number
-
-    /**
-     * Frontend web port (Vite in dev mode).
-     * Use `0` to auto-generate a stable default based on app name.
-     * @default 0
-     */
-    webPort: number
-
-    /**
-     * Embedded static assets (base64 content), used only when `release` is `true`.
-     * @default {}
-     */
-    memoryAssets: Record<string, string>
-
-    /**
-     * Backend RPC API implementation object.
-     * Keys are command names and values are callable handlers.
-     * @default {}
-     */
-    apiImpl: APIImplementation
+export interface DenoUIArgs<TAPI extends object = APIImplementation> {
+    /** Frontend entry. TypeScript gets a generated HTML shell; HTML is served as provided. */
+    ui: string | URL
+    /** Local implementation exposed to the frontend through typed RPC. */
+    api: TAPI
+    /** App identity used for ports, single-instance detection and window placement. */
+    appName?: string
+    /** Launch in a standalone browser app window on Windows. */
+    appMode?: boolean
+    /** Advanced release option containing pre-built frontend assets. */
+    memoryAssets?: Record<string, string>
+    /** Serve memory assets instead of starting the Vite development server. */
+    release?: boolean
+    browser?: string
+    browserProfile?: string
+    closeWhenNoClients?: boolean
+    apiPort?: number
+    webPort?: number
 }
 
-const defaultDenoUIArgs: DenoUIArgs = {
+const defaultDenoUIArgs = {
     appName: 'dui',
     release: false,
     browser: 'chrome',
     browserProfile: 'Default',
     appMode: false,
     closeWhenNoClients: false,
-    frontendRoot: '.',
-    resourceRoot: '.',
-    entryPoint: 'index.html',
     apiPort: 0,
     webPort: 0,
     memoryAssets: {},
-    apiImpl: {},
 }
 
-/**
- * Start Deno UI with optional overrides.
- *
- * Type a literal object for `options` to get full IntelliSense for all fields in {@link DenoUIArgs}.
- */
-export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
+export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>) {
     const runtimeArgsFix = {
         closeWhenNoClients: (options.appMode === true) ? true : false
     }
     const cfg = {...defaultDenoUIArgs, ...runtimeArgsFix, ...options}
+
+    const remoteUI = options.ui instanceof URL && options.ui.protocol !== 'file:'
+    const uiPath = typeof options.ui === 'string'
+        ? resolve(options.ui)
+        : options.ui.protocol === 'file:'
+        ? fromFileUrl(options.ui)
+        : resolve(basename(options.ui.pathname))
+    const frontendRoot = remoteUI ? Deno.cwd() : dirname(uiPath)
+    const uiFileName = basename(uiPath)
+    const customHtml = extname(uiFileName).toLowerCase() === '.html'
+    const uiEntry = `/${encodeURIComponent(uiFileName)}`
+    const pagePath = customHtml ? uiEntry : '/'
+    const generatedHtml = customHtml ? undefined : createDenoUIHtml(uiEntry, cfg.appName)
+    const releasePage = customHtml ? uiFileName : 'index.html'
+    if (remoteUI && (!cfg.release || !Object.hasOwn(cfg.memoryAssets, releasePage))) {
+        throw new Error(`A remote ui URL requires release mode with embedded ${releasePage}`)
+    }
 
     appName = cfg.appName
 
@@ -408,7 +389,7 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
         try {
             const frontendPort = cfg.release ? apiPort : cfg.webPort
             const allowedOrigin = `http://localhost:${frontendPort}`
-            backend = startDenoWebAppService(cfg.resourceRoot, apiPort, cfg.apiImpl, cfg.memoryAssets, cfg.closeWhenNoClients, sessionToken, allowedOrigin);
+            backend = startDenoWebAppService(frontendRoot, apiPort, cfg.api as APIImplementation, cfg.memoryAssets, cfg.closeWhenNoClients, sessionToken, allowedOrigin, generatedHtml);
             console.log(`Backend server started on port ${apiPort}`)
             break
         } catch (_e) {
@@ -428,7 +409,11 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
     if (!cfg.release) {
         console.log('starting vite frontend server')
         frontend = await vite.createServer({
-            root: cfg.frontendRoot,
+            root: frontendRoot,
+            plugins: [
+                denoUIClientPlugin(),
+                ...(generatedHtml ? [generatedHtmlPlugin(generatedHtml)] : [])
+            ],
             server: {
                 host: '127.0.0.1',
                 strictPort: true
@@ -448,7 +433,7 @@ export async function startDenoUI(options: Partial<DenoUIArgs> = {}) {
         'chrome'
     ]
     const appModeParam = appMode? '&_saveWindow' : ''
-    const url = `http://localhost:${webPort}/${cfg.entryPoint}?_apiPort=${apiPort}&_duiToken=${sessionToken}${appModeParam}`
+    const url = `http://localhost:${webPort}${pagePath}?_apiPort=${apiPort}&_duiToken=${sessionToken}${appModeParam}`
     const browsers = cfg.browser === 'edge'? edge : cfg.browser === 'chrome'? chrome : cfg.browser? [cfg.browser] : [...chrome, ...edge]
     let cp: Deno.ChildProcess | null = null
 

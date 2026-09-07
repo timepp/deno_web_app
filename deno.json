@@ -1,9 +1,13 @@
 {
     "name": "@timepp/dui",
-    "version": "0.2.2",
+    "version": "0.3.1",
+    "compilerOptions": {
+        "lib": ["deno.ns", "dom", "dom.iterable", "esnext"]
+    },
     "exports": {
         ".": "./index.ts",
-        "./demo": "./sample-app/app.ts"
+        "./client": "./client.ts",
+        "./demo": "./sample-apps/minimal/app.ts"
     },
     "license": "MIT",
     "minimumDependencyAge": 0

@@ -1,7 +1,8 @@
-import * as vite from 'npm:vite@5.3.3'
+import * as vite from 'npm:vite@6.3.5'
 import * as fs from 'jsr:@std/fs@1.0.5'
 import * as path from 'jsr:@std/path@1.0.7'
 import * as enc from 'jsr:@std/encoding@1.0.1'
+import { createDenoUIHtml, denoUIClientPlugin } from './vite-support.ts'
 
 export function createMemoryAssets(files: {name:string, path:string}[], assetsFile: string, reader?: (f: typeof files[0]) => Uint8Array|null) {
   const assetsLines = files.map(f => `  "${f.name}": "${enc.encodeBase64(reader?.(f) || Deno.readFileSync(f.path))}"`)
@@ -19,7 +20,7 @@ export function saveMemoryAssets(assets: Record<string, string>, root: string) {
 }
 
 export async function buildViteDistAsMemoryAssets(root: string, assetsFile: string) {
-    const r = await vite.build({
+  await vite.build({
         root,
         build: {
             rollupOptions: {
@@ -35,3 +36,52 @@ export async function buildViteDistAsMemoryAssets(root: string, assetsFile: stri
     const files = fs.expandGlobSync('**/*', { root: root + '/dist', includeDirs: false})
     createMemoryAssets([...files], assetsFile)
 }
+
+  export interface BuildDenoUIReleaseOptions {
+    ui: string | URL
+    assetsFile: string
+    appName?: string
+  }
+
+  export async function buildDenoUIReleaseAssets(options: BuildDenoUIReleaseOptions) {
+    const uiPath = options.ui instanceof URL
+      ? (options.ui.protocol === 'file:' ? path.fromFileUrl(options.ui) : (() => { throw new Error('The ui URL must use the file: protocol') })())
+      : path.resolve(options.ui)
+    const root = path.dirname(uiPath)
+    const customHtml = path.extname(uiPath).toLowerCase() === '.html'
+    const indexPath = path.join(root, 'index.html')
+    const previousIndex = customHtml ? undefined : await Deno.readTextFile(indexPath).catch(() => undefined)
+
+    try {
+      if (!customHtml) {
+        const html = createDenoUIHtml(`/${encodeURIComponent(path.basename(uiPath))}`, options.appName)
+        await Deno.writeTextFile(indexPath, html)
+      }
+      await vite.build({
+        root,
+        plugins: [denoUIClientPlugin()],
+        build: {
+          emptyOutDir: true,
+          rollupOptions: {
+            input: customHtml ? uiPath : indexPath,
+            output: {
+              entryFileNames: `[name].js`,
+              chunkFileNames: `[name].js`,
+              assetFileNames: `[name].[ext]`
+            }
+          }
+        }
+      })
+
+      const files = [...fs.expandGlobSync('**/*', { root: path.join(root, 'dist'), includeDirs: false })]
+      createMemoryAssets(files, options.assetsFile)
+    } finally {
+      if (!customHtml) {
+        if (previousIndex === undefined) {
+          await Deno.remove(indexPath).catch(() => undefined)
+        } else {
+          await Deno.writeTextFile(indexPath, previousIndex)
+        }
+      }
+    }
+  }
