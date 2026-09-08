@@ -1,6 +1,6 @@
 {
     "name": "@timepp/dui",
-    "version": "0.3.5",
+    "version": "0.3.6",
     "compilerOptions": {
         "lib": ["deno.ns", "dom", "dom.iterable", "esnext"]
     },
