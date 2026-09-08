@@ -69,6 +69,7 @@ function loadWindowPlacement() {
 }
 
 function startDenoWebAppService(root: string, port: number, apiImpl: APIImplementation, memoryAssets: Record<string, string>, closeWhenNoClients: boolean, sessionToken: string, allowedOrigin: string, generatedHtml?: string): Deno.HttpServer {
+    let shutdownTimer: ReturnType<typeof setTimeout> | undefined
     const handlerCORS = async (req: Request) => {
         // handle websocket connection
         if (req.headers.get("upgrade") === "websocket") {
@@ -79,7 +80,6 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
                 return new Response('Forbidden', {status: 403})
             }
             const { socket, response } = Deno.upgradeWebSocket(req);
-            let closeTimer: ReturnType<typeof setTimeout> | undefined
             let activeRequests = 0
             socket.onopen = () => {
                 if (clients.length >= 8) {
@@ -87,8 +87,9 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
                     return
                 }
                 clients.push(socket)
+                clearTimeout(shutdownTimer)
+                shutdownTimer = undefined
                 console.log("socket opened, total clients:", clients.length);
-                clearTimeout(closeTimer)
             }
             const closeSocketWithMessage = (message: string, code = 1008) => {
                 console.log('closing socket with error: ', message)
@@ -186,13 +187,11 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
                 }
                 unregisterSessionsForClient(socket)
                 console.log("socket closed, total clients:", clients.length);
-                clearTimeout(closeTimer)
-                if (clients.length === 0 && closeWhenNoClients) {
-                    console.log('no more clients, shutting down server in 3 seconds')
-                    closeTimer = setTimeout(() => {
-                        if (clients.length === 0) {
-                            ac.abort()
-                        }
+                if (i >= 0 && clients.length === 0 && closeWhenNoClients) {
+                    clearTimeout(shutdownTimer)
+                    console.log('no more clients, shutting down backend in 3 seconds')
+                    shutdownTimer = setTimeout(() => {
+                        if (clients.length === 0) ac.abort()
                     }, 3000)
                 }
             }
@@ -282,6 +281,19 @@ function createSessionToken() {
     return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
+async function findAvailablePort(startPort: number): Promise<number> {
+    for (let port = startPort; port < startPort + 10; port++) {
+        try {
+            const listener = Deno.listen({ hostname: '127.0.0.1', port })
+            listener.close()
+            return port
+        } catch (error) {
+            if (!isErrorWithCode(error) || error.code !== 'EADDRINUSE') throw error
+        }
+    }
+    throw new Error(`Could not find an available port between ${startPort} and ${startPort + 9}`)
+}
+
 // Check if the same app instance is already running on the given port
 async function checkSameAppRunning(port: number, expectedAppName: string): Promise<boolean> {
     try {
@@ -314,6 +326,7 @@ export interface DenoUIArgs<TAPI extends object = APIImplementation> {
     release?: boolean
     browser?: string
     browserProfile?: string
+    /** Stop the backend three seconds after its last frontend disconnects. @default false */
     closeWhenNoClients?: boolean
     apiPort?: number
     webPort?: number
@@ -332,10 +345,7 @@ const defaultDenoUIArgs = {
 }
 
 export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>) {
-    const runtimeArgsFix = {
-        closeWhenNoClients: (options.appMode === true) ? true : false
-    }
-    const cfg = {...defaultDenoUIArgs, ...runtimeArgsFix, ...options}
+    const cfg = {...defaultDenoUIArgs, ...options}
 
     const remoteUI = options.ui instanceof URL && options.ui.protocol !== 'file:'
     const uiPath = typeof options.ui === 'string'
@@ -365,6 +375,9 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
     if (cfg.webPort === 0) {
         // get default web port by hash of app name
         cfg.webPort = 4000 + (Math.abs(hashString(`${appName} web`)) % 1000)
+    }
+    if (!cfg.release) {
+        cfg.webPort = await findAvailablePort(cfg.webPort)
     }
 
     // Try different ports if the default one is already in use
@@ -420,7 +433,7 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
             }
         })
         webPort = cfg.webPort
-        frontend.listen(webPort)
+        await frontend.listen(webPort)
     }
     
     const edge = [

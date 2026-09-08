@@ -131,10 +131,7 @@ API invocation uses discriminated WebSocket messages. RPC requests use `rpc.requ
 
 Unknown methods and exceptions thrown by local API implementations reject the frontend promise with `RPCError`. Its `code` is `METHOD_NOT_FOUND`, `HANDLER_ERROR`, `TOO_MANY_REQUESTS`, or `SERIALIZATION_ERROR`, and its `message` contains the relevant details.
 
-WebSocket is also used to prove presence of the backend/frontend. The backend and frontend all together behaves as a single app:
-
-- If the backend is killed, the frontend will close as well.
-- If there is no frontend connected, the backend will exit as well (after a short delay).
+Deno UI never asks the browser to close its page. By default, the backend continues running after all frontends disconnect. Applications can opt in to stopping the backend three seconds after the last frontend disconnects by setting `closeWhenNoClients: true`; this option only controls the backend process and does not close any browser page.
 
 ## Development
 
