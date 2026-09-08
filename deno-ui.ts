@@ -351,7 +351,7 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
         : options.ui.protocol === 'file:'
         ? fromFileUrl(options.ui)
         : resolve(basename(options.ui.pathname))
-    const frontendRoot = remoteUI ? Deno.cwd() : dirname(uiPath)
+    const frontendRoot = remoteUI ? undefined : dirname(uiPath)
     const uiFileName = basename(uiPath)
     const customHtml = extname(uiFileName).toLowerCase() === '.html'
     const uiEntry = remoteUI && !customHtml
@@ -428,24 +428,35 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
     const webPort = cfg.webPort
     let frontend: vite.ViteDevServer | null = null
     let staticWebServer: Deno.HttpServer | null = null
+    let temporaryFrontendRoot: string | undefined
     if (!useStaticFrontend) {
         console.log('starting Vite web server')
-        frontend = await vite.createServer({
-            root: frontendRoot,
-            ...(remoteUI ? { optimizeDeps: { noDiscovery: true } } : {}),
-            plugins: [
-                denoUIClientPlugin(),
-                ...(remoteUI ? [remoteUIPlugin(options.ui as URL)] : []),
-                ...(generatedHtml ? [generatedHtmlPlugin(generatedHtml)] : [])
-            ],
-            server: {
-                host: '127.0.0.1',
-                strictPort: true
-            }
-        })
-        await frontend.listen(webPort)
+        temporaryFrontendRoot = remoteUI ? await Deno.makeTempDir({ prefix: 'deno-ui-vite-' }) : undefined
+        try {
+            frontend = await vite.createServer({
+                root: temporaryFrontendRoot ?? frontendRoot,
+                appType: remoteUI ? 'custom' : 'spa',
+                ...(remoteUI ? { optimizeDeps: { noDiscovery: true } } : {}),
+                plugins: [
+                    denoUIClientPlugin(),
+                    ...(remoteUI ? [remoteUIPlugin(options.ui as URL)] : []),
+                    ...(generatedHtml ? [generatedHtmlPlugin(generatedHtml)] : [])
+                ],
+                server: {
+                    host: '127.0.0.1',
+                    strictPort: true,
+                    watch: remoteUI ? null : undefined
+                }
+            })
+            await frontend.listen(webPort)
+        } catch (error) {
+            await frontend?.close()
+            if (temporaryFrontendRoot) await Deno.remove(temporaryFrontendRoot, { recursive: true }).catch(() => undefined)
+            await backend.shutdown()
+            throw error
+        }
     } else {
-        staticWebServer = startStaticWebServer(frontendRoot, webPort, memoryAssets, generatedHtml)
+        staticWebServer = startStaticWebServer(frontendRoot ?? Deno.cwd(), webPort, memoryAssets, generatedHtml)
         console.log(`Static web server started on port ${webPort}`)
     }
     
@@ -502,6 +513,9 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
     await backend.finished
     if (frontend) {
         await frontend.close()
+    }
+    if (temporaryFrontendRoot) {
+        await Deno.remove(temporaryFrontendRoot, { recursive: true }).catch(() => undefined)
     }
     if (staticWebServer) {
         await staticWebServer.shutdown()
