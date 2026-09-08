@@ -90,7 +90,12 @@ const networkInfo = await api.getNetworkInfo('')
 ...
 ```
 
-`startDenoUI` will start the http server, websocket server and launch browser to navigate to the corresponding web address.
+`startDenoUI` starts two distinct local servers and then launches the browser:
+
+- a frontend server for HTML, JavaScript, CSS, and other web resources;
+- an API server for the authenticated WebSocket RPC channel and health check.
+
+The frontend and API always use separate ports. When `memoryAssets` is empty or omitted, Deno UI uses Vite as the frontend server. When pre-built `memoryAssets` are provided, it automatically uses a lightweight static frontend server. Applications do not need to select a development or release mode.
 
 ### Security model
 
@@ -112,12 +117,17 @@ denoUI.startDenoUI({
 
 You can publish your app to JSR so that it can be run without installation.
 
-1. run `deno run -A build.ts` to build the frontend and encode the assets
-2. follow the [official guide](https://jsr.io/docs/publishing-packages#publishing-from-your-local-machine) to publish your app to JSR
+For a simple application whose UI entry is a TypeScript or JavaScript module, no frontend build is required. Publish the application entry and UI source files directly. Deno UI loads the published UI module through Vite at runtime. The minimal demo uses this approach and can be run directly with:
 
-#### background: why we need to encode resources
+```bash
+deno run -A jsr:@timepp/dui/demo
+```
 
-While we can import remote code from JSR, importing static assets like HTML, CSS, and other types isn't possible directly. To download these assets, we need to encode them into a single TypeScript source file for import. On the user’s machine, the backend will decode these assets and serve them from memory.
+Applications with custom HTML, CSS, images, or other static resources can optionally run `buildDenoUIAssets()` before publishing and pass the generated `memoryAssets` to `startDenoUI()`. Deno UI detects these assets automatically; there is no release flag.
+
+#### background: when resources need encoding
+
+TypeScript and JavaScript UI modules can be loaded directly from JSR. Static files such as HTML, CSS, and images are not imported the same way, so applications that need them can encode their built frontend into a TypeScript source file. On the user’s machine, the frontend server decodes and serves those assets from memory.
 
 ![jsr](doc/jsr.drawio.svg)
 

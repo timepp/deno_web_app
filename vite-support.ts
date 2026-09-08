@@ -3,6 +3,8 @@ import { transformWithEsbuild, type Plugin, type ViteDevServer } from 'npm:vite@
 // Keep the .ts suffix so Vite applies its TypeScript transform to the virtual module.
 const virtualClientId = '\0deno-ui-client.ts'
 const clientSpecifier = /^jsr:@timepp\/dui(?:@[^/]+)?\/client$/
+const remoteEntryPath = '/_dui/remote-entry'
+const remoteModulePrefix = '\0deno-ui-remote:'
 
 async function loadClientSource(): Promise<string> {
     const url = new URL('./client.ts', import.meta.url)
@@ -44,6 +46,49 @@ export function denoUIClientPlugin(): Plugin {
             })
         }
     }
+}
+
+export function remoteUIPlugin(entryUrl: URL): Plugin {
+    const entryId = `${remoteEntryPath}${new URL(entryUrl).pathname.match(/\.[^./]+$/)?.[0] ?? '.ts'}`
+
+    return {
+        name: 'deno-ui-remote-ui',
+        enforce: 'pre',
+        resolveId(id, importer) {
+            if (id === entryId) return remoteModulePrefix + entryUrl.href
+
+            if (importer?.startsWith(remoteModulePrefix) && (id.startsWith('./') || id.startsWith('../'))) {
+                const importerUrl = importer.slice(remoteModulePrefix.length)
+                return remoteModulePrefix + new URL(id, importerUrl).href
+            }
+
+            if (id.startsWith('https://') || id.startsWith('http://')) {
+                return remoteModulePrefix + id
+            }
+            return null
+        },
+        async load(id) {
+            if (!id.startsWith(remoteModulePrefix)) return null
+            const url = id.slice(remoteModulePrefix.length)
+            const response = await fetch(url)
+            if (!response.ok) {
+                throw new Error(`Unable to load remote UI module ${url}: ${response.status} ${response.statusText}`)
+            }
+            const source = await response.text()
+            const extension = new URL(url).pathname.match(/\.([^.\/]+)$/)?.[1]
+            if (extension === 'ts' || extension === 'tsx') {
+                return await transformWithEsbuild(source, new URL(url).pathname, {
+                    loader: extension,
+                    target: 'esnext'
+                })
+            }
+            return source
+        }
+    }
+}
+
+export function getRemoteUIEntryPath(entryUrl: URL): string {
+    return `${remoteEntryPath}${entryUrl.pathname.match(/\.[^./]+$/)?.[0] ?? '.ts'}`
 }
 
 export function generatedHtmlPlugin(html: string): Plugin {

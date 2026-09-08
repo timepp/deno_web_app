@@ -7,11 +7,10 @@ import { activateWindow } from './activate-window.ts'
 import * as so from "jsr:@lambdalisue/systemopen@1.0.0";
 import { registerSession, isSessionId, unregisterSessionsForClient } from './session-registry.ts'
 import * as tu from "jsr:@timepp/uu@1.0.6"
-import { createDenoUIHtml, denoUIClientPlugin, generatedHtmlPlugin } from './vite-support.ts'
+import { createDenoUIHtml, denoUIClientPlugin, generatedHtmlPlugin, getRemoteUIEntryPath, remoteUIPlugin } from './vite-support.ts'
 
 const clients: WebSocket[] = []
-let server: Deno.HttpServer | null = null
-const ac = new AbortController()
+let apiServer: Deno.HttpServer | null = null
 let appName = 'dui'
 
 export type APIHandler = (...args: unknown[]) => unknown | Promise<unknown>
@@ -68,16 +67,20 @@ function loadWindowPlacement() {
     }
 }
 
-function startDenoWebAppService(root: string, port: number, apiImpl: APIImplementation, memoryAssets: Record<string, string>, closeWhenNoClients: boolean, sessionToken: string, allowedOrigin: string, generatedHtml?: string): Deno.HttpServer {
+function startApiServer(port: number, apiImpl: APIImplementation, closeWhenNoClients: boolean, sessionToken: string, allowedOrigin: string): Deno.HttpServer {
     let shutdownTimer: ReturnType<typeof setTimeout> | undefined
-    const handlerCORS = async (req: Request) => {
-        // handle websocket connection
-        if (req.headers.get("upgrade") === "websocket") {
-            const requestUrl = new URL(req.url)
-            if (requestUrl.pathname !== '/_dui/ws' ||
-                requestUrl.searchParams.get('token') !== sessionToken ||
-                req.headers.get('origin') !== allowedOrigin) {
-                return new Response('Forbidden', {status: 403})
+    const handler = (req: Request) => {
+        const requestUrl = new URL(req.url)
+
+        if (requestUrl.pathname === '/_health' && req.headers.get('upgrade') !== 'websocket') {
+            return new Response(JSON.stringify({ appName }), {
+                headers: { 'content-type': 'application/json' }
+            })
+        }
+
+        if (requestUrl.pathname === '/_dui/ws' && req.headers.get('upgrade') === 'websocket') {
+            if (requestUrl.searchParams.get('token') !== sessionToken || req.headers.get('origin') !== allowedOrigin) {
+                return new Response('Forbidden', { status: 403 })
             }
             const { socket, response } = Deno.upgradeWebSocket(req);
             let activeRequests = 0
@@ -191,7 +194,7 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
                     clearTimeout(shutdownTimer)
                     console.log('no more clients, shutting down backend in 3 seconds')
                     shutdownTimer = setTimeout(() => {
-                        if (clients.length === 0) ac.abort()
+                        if (clients.length === 0) apiServer?.shutdown()
                     }, 3000)
                 }
             }
@@ -201,19 +204,17 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
             return response;
         }
 
-        const response = await handler(req);
-        return response;
+        return new Response('Not Found', { status: 404 })
     }
+
+    apiServer = Deno.serve({ hostname: '127.0.0.1', port }, handler)
+    return apiServer
+}
+
+function startStaticWebServer(root: string, port: number, memoryAssets: Record<string, string>, generatedHtml?: string): Deno.HttpServer {
     const handler = async (req: Request) => {
         let path = new URL(req.url).pathname;
-    
-        // Health check endpoint for single instance detection
-        if (path === "/_health") {
-            return new Response(JSON.stringify({ appName }), {
-                headers: { "content-type": "application/json" }
-            });
-        }
-    
+
         if (path === "/") {
             if (generatedHtml === undefined) {
                 return new Response("Not Found", { status: 404 })
@@ -259,13 +260,13 @@ function startDenoWebAppService(root: string, port: number, apiImpl: APIImplemen
             return new Response("Internal Server Error", { status: 500 });
         }
     };
-    
-    server = Deno.serve({ hostname: '127.0.0.1', port, signal:ac.signal }, handlerCORS);
-    return server
+
+    return Deno.serve({ hostname: '127.0.0.1', port }, handler)
 }
 
-function stopDenoWebAppService() {
+function stopApiServer() {
     clients.forEach(c => c.close())
+    apiServer?.shutdown()
 }
 
 function hashString(str: string) {
@@ -281,7 +282,7 @@ function createSessionToken() {
     return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
-async function findAvailablePort(startPort: number): Promise<number> {
+function findAvailablePort(startPort: number): number {
     for (let port = startPort; port < startPort + 10; port++) {
         try {
             const listener = Deno.listen({ hostname: '127.0.0.1', port })
@@ -320,10 +321,8 @@ export interface DenoUIArgs<TAPI extends object = APIImplementation> {
     appName?: string
     /** Launch in a standalone browser app window on Windows. */
     appMode?: boolean
-    /** Advanced release option containing pre-built frontend assets. */
+    /** Advanced option containing pre-built frontend assets. Non-empty assets use the static frontend server. */
     memoryAssets?: Record<string, string>
-    /** Serve memory assets instead of starting the Vite development server. */
-    release?: boolean
     browser?: string
     browserProfile?: string
     /** Stop the backend three seconds after its last frontend disconnects. @default false */
@@ -334,7 +333,6 @@ export interface DenoUIArgs<TAPI extends object = APIImplementation> {
 
 const defaultDenoUIArgs = {
     appName: 'dui',
-    release: false,
     browser: 'chrome',
     browserProfile: 'Default',
     appMode: false,
@@ -356,12 +354,19 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
     const frontendRoot = remoteUI ? Deno.cwd() : dirname(uiPath)
     const uiFileName = basename(uiPath)
     const customHtml = extname(uiFileName).toLowerCase() === '.html'
-    const uiEntry = `/${encodeURIComponent(uiFileName)}`
+    const uiEntry = remoteUI && !customHtml
+        ? getRemoteUIEntryPath(options.ui as URL)
+        : `/${encodeURIComponent(uiFileName)}`
     const pagePath = customHtml ? uiEntry : '/'
     const generatedHtml = customHtml ? undefined : createDenoUIHtml(uiEntry, cfg.appName)
-    const releasePage = customHtml ? uiFileName : 'index.html'
-    if (remoteUI && (!cfg.release || !Object.hasOwn(cfg.memoryAssets, releasePage))) {
-        throw new Error(`A remote ui URL requires release mode with embedded ${releasePage}`)
+    const embeddedPage = customHtml ? uiFileName : 'index.html'
+    const memoryAssets = cfg.memoryAssets ?? {}
+    const useStaticFrontend = Object.keys(memoryAssets).length > 0
+    if (useStaticFrontend && !Object.hasOwn(memoryAssets, embeddedPage)) {
+        throw new Error(`memoryAssets must include ${embeddedPage}`)
+    }
+    if (remoteUI && customHtml && !useStaticFrontend) {
+        throw new Error('A remote HTML ui requires embedded memoryAssets; remote TypeScript and JavaScript entries can run directly with Vite')
     }
 
     appName = cfg.appName
@@ -376,9 +381,10 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
         // get default web port by hash of app name
         cfg.webPort = 4000 + (Math.abs(hashString(`${appName} web`)) % 1000)
     }
-    if (!cfg.release) {
-        cfg.webPort = await findAvailablePort(cfg.webPort)
+    if (cfg.webPort === cfg.apiPort) {
+        cfg.webPort++
     }
+    cfg.webPort = await findAvailablePort(cfg.webPort)
 
     // Try different ports if the default one is already in use
     let apiPort = cfg.apiPort
@@ -398,12 +404,15 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
                 Deno.exit(0)
             }
         }
+        if (apiPort === cfg.webPort) {
+            apiPort++
+            continue
+        }
         
         try {
-            const frontendPort = cfg.release ? apiPort : cfg.webPort
-            const allowedOrigin = `http://localhost:${frontendPort}`
-            backend = startDenoWebAppService(frontendRoot, apiPort, cfg.api as APIImplementation, cfg.memoryAssets, cfg.closeWhenNoClients, sessionToken, allowedOrigin, generatedHtml);
-            console.log(`Backend server started on port ${apiPort}`)
+            const allowedOrigin = `http://localhost:${cfg.webPort}`
+            backend = startApiServer(apiPort, cfg.api as APIImplementation, cfg.closeWhenNoClients, sessionToken, allowedOrigin)
+            console.log(`API server started on port ${apiPort}`)
             break
         } catch (_e) {
             console.log(`Port ${apiPort} is in use by another app, trying next port...`)
@@ -416,15 +425,17 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
         Deno.exit(1)
     }
     
-    let webPort = apiPort
+    const webPort = cfg.webPort
     let frontend: vite.ViteDevServer | null = null
-    // Use Vite for local development
-    if (!cfg.release) {
-        console.log('starting vite frontend server')
+    let staticWebServer: Deno.HttpServer | null = null
+    if (!useStaticFrontend) {
+        console.log('starting Vite web server')
         frontend = await vite.createServer({
             root: frontendRoot,
+            ...(remoteUI ? { optimizeDeps: { noDiscovery: true } } : {}),
             plugins: [
                 denoUIClientPlugin(),
+                ...(remoteUI ? [remoteUIPlugin(options.ui as URL)] : []),
                 ...(generatedHtml ? [generatedHtmlPlugin(generatedHtml)] : [])
             ],
             server: {
@@ -432,8 +443,10 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
                 strictPort: true
             }
         })
-        webPort = cfg.webPort
         await frontend.listen(webPort)
+    } else {
+        staticWebServer = startStaticWebServer(frontendRoot, webPort, memoryAssets, generatedHtml)
+        console.log(`Static web server started on port ${webPort}`)
     }
     
     const edge = [
@@ -488,8 +501,10 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
 
     await backend.finished
     if (frontend) {
-        // console.log('closing frontend server')
-        // frontend.close()
+        await frontend.close()
+    }
+    if (staticWebServer) {
+        await staticWebServer.shutdown()
     }
     // await apiImpl.cleanUp()
     console.log('App Exit')
@@ -497,5 +512,5 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
 }
 
 export function stopDenoUI() {
-    stopDenoWebAppService()
+    stopApiServer()
 }

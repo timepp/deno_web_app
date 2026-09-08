@@ -3,14 +3,14 @@ import { apiImpl } from './api-impl.ts'
 import * as denoUI from "../../index.ts"
 
 const args = parseArgs(Deno.args)
-const release = args.release || !import.meta.url.startsWith('file://')
-const memoryAssets = release? (await import('./release-assets.ts')).assets : {}
+const memoryAssets = import.meta.url.startsWith('file://')
+    ? {}
+    : (await import('./release-assets.ts')).assets ?? {}
 
 await denoUI.startDenoUI({
     appName: 'dui-sample-app',
     ui: new URL('./frontend/index.html', import.meta.url),
     api: apiImpl,
     appMode: args.appMode ?? false,
-    release,
     memoryAssets
 })
