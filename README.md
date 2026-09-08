@@ -7,23 +7,62 @@
 - **DRY**: Minimize boilerplate code by defining API interfaces once and deriving frontend and backend implementations.
 - **Installation Free**: Can be packaged as a JSR component, enabling installation-free execution.
 
-To see a demo app (which displays your network interfaces), simply run the following command:
+## Demos
+
+Try the minimal demo to see how little code a Deno UI application needs. Its source is in `sample-apps/minimal`, consists of just two TypeScript files, and displays the system uptime:
 
 ```bash
 deno run -A jsr:@timepp/dui/demo
+```
+
+For a more complete example, run the full demo. Its source is in `sample-apps/full` and demonstrates a structured frontend project communicating with a local Deno backend. The application displays the machine's network interfaces:
+
+```bash
+deno run -A jsr:@timepp/dui/fullDemo
+```
+
+Add `--appMode` to launch the full demo in a standalone browser app window:
+
+```bash
+deno run -A jsr:@timepp/dui/fullDemo --appMode
 ```
 
 ![demo](doc/demo.png)
 
 ## Usage
 
-### create your app with bootstrap code
+You can add Deno UI to an existing project or create a complete application from the provided template. Both approaches use the same API contract, backend implementation, and `startDenoUI()` startup flow described below.
 
-```bash
-deno run -A jsr:@timepp/dui@0.1.4 create-app app1
+### Add Deno UI to an existing application
+
+No installation or project configuration is required. Import Deno UI directly from JSR, choose an existing TypeScript, JavaScript, or HTML file as the frontend entry, and pass it to `startDenoUI()` together with the local API implementation:
+
+```typescript
+import { startDenoUI } from "jsr:@timepp/dui"
+import { apiImpl } from './api-impl.ts'
+
+await startDenoUI({
+    appName: 'my-app',
+    ui: new URL('./frontend/ui.ts', import.meta.url),
+    api: apiImpl
+})
 ```
 
-this will create an app in the new folder `app1`.
+Deno UI starts the frontend and API servers, opens the browser, and manages communication between the frontend and the local Deno backend. Continue with the sections below to define the typed API and its implementation.
+
+### Create a new application from the template
+
+Run the bootstrap command to generate a complete starter project:
+
+```bash
+deno run -A jsr:@timepp/dui create-app app1
+```
+
+This creates a new application in the `app1` directory, including the frontend, typed API, backend implementation, and VS Code configuration. Change to that directory before continuing with the following steps:
+
+```bash
+cd app1
+```
 
 ### define the typed local API in `api.ts`
 
@@ -149,7 +188,7 @@ Deno UI never asks the browser to close its page. By default, the backend contin
 ### To test the latest published version
 
 ```sh
-deno run -A --minimum-dependency-age=0 --reload=jsr:@timepp/dui@0.3.3 jsr:@timepp/dui@0.3.3/demo
+deno run -A --minimum-dependency-age=0 jsr:@timepp/dui@0.3.3/demo
 ```
 
 ### Step to publish changes
