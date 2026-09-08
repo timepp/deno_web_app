@@ -62,12 +62,13 @@ import { apiImpl } from './api-impl.ts'
 
 await startDenoUI({
     appName: 'dui-sample-app',
+    title: 'My Application',
     ui: new URL('./frontend/ui.ts', import.meta.url),
     api: apiImpl
 })
 ```
 
-When `ui` points to a TypeScript or JavaScript module, Deno UI generates the HTML shell, starts the local servers, establishes the frontend connection and launches the browser.
+When `ui` points to a TypeScript or JavaScript module, Deno UI generates the HTML shell, starts the local servers, establishes the frontend connection and launches the browser. `title` controls the browser title and the Windows AppMode window lookup; it defaults to `appName`.
 
 An application that needs custom metadata, preload directives, a specific DOM skeleton, or other page-level behavior can provide HTML instead:
 
@@ -79,7 +80,7 @@ await startDenoUI({
 })
 ```
 
-In this mode Deno UI serves the supplied HTML as the page entry and does not generate or map a default HTML document. The HTML is responsible for loading the application module, for example `<script type="module" src="./ui.ts"></script>`.
+In this mode Deno UI serves the supplied HTML as the page entry and does not generate or map a default HTML document. The HTML is responsible for loading the application module, for example `<script type="module" src="./ui.ts"></script>`. In AppMode, Deno UI applies the configured `title` after the page loads, so window activation and placement restoration do not depend on the HTML `<title>` matching `appName`.
 
 ### calling API in frontend code
 
@@ -144,6 +145,12 @@ Unknown methods and exceptions thrown by local API implementations reject the fr
 Deno UI never asks the browser to close its page. By default, the backend continues running after all frontends disconnect. Applications can opt in to stopping the backend three seconds after the last frontend disconnects by setting `closeWhenNoClients: true`; this option only controls the backend process and does not close any browser page.
 
 ## Development
+
+### To test the latest published version
+
+```sh
+deno run -A --minimum-dependency-age=0 --reload=jsr:@timepp/dui@0.3.3 jsr:@timepp/dui@0.3.3/demo
+```
 
 ### Step to publish changes
 

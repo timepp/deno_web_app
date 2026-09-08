@@ -7,7 +7,7 @@ export function activateWindow(windowTitle: string): boolean {
 
     try {
         const user32 = Deno.dlopen("user32.dll", {
-            FindWindowA: {
+            FindWindowW: {
                 parameters: ["pointer", "pointer"],
                 result: "pointer",
             },
@@ -25,8 +25,9 @@ export function activateWindow(windowTitle: string): boolean {
             }
         });
         
-        const windowNamePtr = new TextEncoder().encode(windowTitle + "\0");
-        const hWnd = user32.symbols.FindWindowA(
+        const windowNamePtr = new Uint16Array(windowTitle.length + 1);
+        for (let i = 0; i < windowTitle.length; i++) windowNamePtr[i] = windowTitle.charCodeAt(i);
+        const hWnd = user32.symbols.FindWindowW(
             null,
             Deno.UnsafePointer.of(windowNamePtr)
         );

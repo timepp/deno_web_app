@@ -31,6 +31,8 @@ const browser = globalThis as typeof globalThis & Window
 
 function getStartupContext() {
     const startupParams = new URLSearchParams(browser.location.search)
+    const windowTitle = startupParams.get('_windowTitle')
+    if (windowTitle) browser.document.title = windowTitle
     const launchToken = startupParams.get('_duiToken')
     const sessionToken = launchToken ?? browser.sessionStorage.getItem('_duiToken')
 
@@ -46,10 +48,15 @@ function getStartupContext() {
 
 let lastWindowPlacement = [0, 0, 0, 0]
 function saveWindowPlacement() {
+    // Chrome hides the document when its app window is minimized. Its reported
+    // x/y then become Windows parking coordinates rather than a restorable position.
+    if (browser.document.visibilityState === 'hidden') return
     const placement = [browser.screenX, browser.screenY, browser.outerWidth, browser.outerHeight]
     if (placement.every((value, index) => value === lastWindowPlacement[index])) return
     lastWindowPlacement = placement
-    ws?.send(JSON.stringify({ type: 'system.window-placement', placement }))
+    if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'system.window-placement', placement }))
+    }
 }
 
 export async function connectWebSocket(): Promise<void> {
@@ -76,7 +83,9 @@ function getWebSocket(): Promise<WebSocket> {
         socket.onopen = () => {
             ws = socket
             if (startupParams.has('_saveWindow') && windowPlacementTimer === undefined) {
+                saveWindowPlacement()
                 windowPlacementTimer = setInterval(saveWindowPlacement, 1000)
+                browser.document.addEventListener('visibilitychange', saveWindowPlacement)
             }
             resolve(socket)
         }

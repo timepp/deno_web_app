@@ -35,32 +35,40 @@ function isErrorWithCode(e: unknown): e is { code: string } {
     return typeof e === 'object' && e !== null && 'code' in e && typeof (e as { code: unknown }).code === 'string'
 }
 
-function saveWindowPlacement(x: number, y: number, width: number, height: number) {
-    // filter out invalid values (e.g. when the window is minimized)
-    if (x < 0 || y < 0 || width <= 0 || height <= 0) {
-        return
-    }
+function getWindowPlacementPath(): string | null {
     const appData = Deno.env.get('APPDATA')
-    if (!appData) {
+    if (!appData) return null
+    return `${appData}/${encodeURIComponent(appName)}-window.json`
+}
+
+function saveWindowPlacement(x: number, y: number, width: number, height: number) {
+    // Negative x/y values are valid when a monitor is left of or above the primary display.
+    // Minimized Windows app windows use far-negative parking coordinates (commonly
+    // around -32000, or -21333 with 150% display scaling), which must not be persisted.
+    if (![x, y, width, height].every(Number.isFinite) || x < -10000 || y < -10000 || width <= 0 || height <= 0) {
         return
     }
+    const path = getWindowPlacementPath()
+    if (!path) return
     const data = {x, y, width, height}
-    const path = appData + '/' + appName + '-window.json'
-    Deno.writeTextFileSync(path, JSON.stringify(data))
+    try {
+        console.log(`saving window placement to ${path}`)
+        Deno.writeTextFileSync(path, JSON.stringify(data))
+    } catch (error) {
+        console.warn(`Could not save window placement to ${path}:`, error)
+    }
 }
 
 function loadWindowPlacement() {
-    const appData = Deno.env.get('APPDATA')
-    if (!appData) {
-        return null
-    }
-    const path = appData + '/' + appName + '-window.json'
+    const path = getWindowPlacementPath()
+    if (!path) return null
     try {
         const data = JSON.parse(Deno.readTextFileSync(path))
-        // fix invalid values
-        if (data.x < 0 || data.y < 0 || data.width <= 0 || data.height <= 0) {
+        if (![data.x, data.y, data.width, data.height].every((value: unknown) => typeof value === 'number' && Number.isFinite(value)) ||
+            data.x < -10000 || data.y < -10000 || data.width <= 0 || data.height <= 0) {
             return null
         }
+        console.log(`loaded window placement from ${path}:`, data)
         return data
     } catch {
         return null
@@ -128,6 +136,7 @@ function startApiServer(port: number, apiImpl: APIImplementation, closeWhenNoCli
                         return
                     }
                     const [x, y, width, height] = placement as number[]
+                    console.log(`received window placement: x=${x}, y=${y}, width=${width}, height=${height}`)
                     saveWindowPlacement(x, y, width, height)
                     return
                 }
@@ -319,6 +328,8 @@ export interface DenoUIArgs<TAPI extends object = APIImplementation> {
     api: TAPI
     /** App identity used for ports, single-instance detection and window placement. */
     appName?: string
+    /** Browser window title used in AppMode. Defaults to appName. */
+    title?: string
     /** Launch in a standalone browser app window on Windows. */
     appMode?: boolean
     /** Advanced option containing pre-built frontend assets. Non-empty assets use the static frontend server. */
@@ -344,6 +355,7 @@ const defaultDenoUIArgs = {
 
 export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>) {
     const cfg = {...defaultDenoUIArgs, ...options}
+    const windowTitle = options.title ?? cfg.appName
 
     const remoteUI = options.ui instanceof URL && options.ui.protocol !== 'file:'
     const uiPath = typeof options.ui === 'string'
@@ -358,7 +370,7 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
         ? getRemoteUIEntryPath(options.ui as URL)
         : `/${encodeURIComponent(uiFileName)}`
     const pagePath = customHtml ? uiEntry : '/'
-    const generatedHtml = customHtml ? undefined : createDenoUIHtml(uiEntry, cfg.appName)
+    const generatedHtml = customHtml ? undefined : createDenoUIHtml(uiEntry, windowTitle)
     const embeddedPage = customHtml ? uiFileName : 'index.html'
     const memoryAssets = cfg.memoryAssets ?? {}
     const useStaticFrontend = Object.keys(memoryAssets).length > 0
@@ -396,7 +408,7 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
             const isSameAppRunning = await checkSameAppRunning(apiPort, appName)
             if (isSameAppRunning) {
                 console.log(`${appName} is already running on port ${apiPort}, activating existing window...`)
-                if (activateWindow(appName)) {
+                if (activateWindow(windowTitle)) {
                     console.log('Existing window activated successfully')
                 } else {
                     console.log('Could not activate window, but instance is running')
@@ -469,7 +481,9 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
         '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
         'chrome'
     ]
-    const appModeParam = appMode? '&_saveWindow' : ''
+    const appModeParam = appMode
+        ? `&_saveWindow&_windowTitle=${encodeURIComponent(windowTitle)}`
+        : ''
     const url = `http://localhost:${webPort}${pagePath}?_apiPort=${apiPort}&_duiToken=${sessionToken}${appModeParam}`
     const browsers = cfg.browser === 'edge'? edge : cfg.browser === 'chrome'? chrome : cfg.browser? [cfg.browser] : [...chrome, ...edge]
     let cp: Deno.ChildProcess | null = null
@@ -502,7 +516,7 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
         const wp = loadWindowPlacement()
         if (wp) {
             for (let i = 0; i < 30; i++) {
-                if (changeWindowSize(appName, null, wp.x, wp.y, wp.width, wp.height)) {
+                if (changeWindowSize(windowTitle, null, wp.x, wp.y, wp.width, wp.height)) {
                     break
                 }
                 await new Promise(r => setTimeout(r, 100))
