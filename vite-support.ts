@@ -2,7 +2,9 @@ import { transformWithEsbuild, type Plugin, type ViteDevServer } from 'npm:vite@
 
 // Keep the .ts suffix so Vite applies its TypeScript transform to the virtual module.
 const virtualClientId = '\0deno-ui-client.ts'
-const clientSpecifier = /^jsr:@timepp\/dui(?:@[^/]+)?\/client$/
+const clientSpecifier = /^(?:jsr:)?@timepp\/dui(?:@[^/]+)?\/client$/
+const inlineUIEntryPath = '/_dui/inline-entry.js'
+const virtualInlineUIId = '\0deno-ui-inline-entry.js'
 const remoteEntryPath = '/_dui/remote-entry'
 const remoteModulePrefix = '\0deno-ui-remote:'
 
@@ -46,6 +48,40 @@ export function denoUIClientPlugin(): Plugin {
             })
         }
     }
+}
+
+function asFunctionExpression(source: string): string {
+    const trimmed = source.trim()
+    if (trimmed.includes('[native code]')) {
+        throw new Error('Inline UI must be a JavaScript or TypeScript function')
+    }
+    const arrowFunction = /^(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.test(trimmed)
+    if (/^(?:async\s+)?function\b/.test(trimmed) || arrowFunction) return trimmed
+    if (trimmed.startsWith('async ')) return `async function ${trimmed.slice(6)}`
+    return `function ${trimmed}`
+}
+
+export function inlineUIPlugin(initializerSource: string): Plugin {
+    const initializer = asFunctionExpression(initializerSource)
+    return {
+        name: 'deno-ui-inline-ui',
+        enforce: 'pre',
+        resolveId(id) {
+            return id === inlineUIEntryPath ? virtualInlineUIId : null
+        },
+        load(id) {
+            if (id !== virtualInlineUIId) return null
+            return `
+import { createClient } from 'jsr:@timepp/dui/client'
+const initializeUI = ${initializer}
+await initializeUI(createClient())
+`
+        }
+    }
+}
+
+export function getInlineUIEntryPath(): string {
+    return inlineUIEntryPath
 }
 
 export function remoteUIPlugin(entryUrl: URL): Plugin {

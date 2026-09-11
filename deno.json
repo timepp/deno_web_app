@@ -1,14 +1,16 @@
 {
     "name": "@timepp/dui",
-    "version": "0.3.6",
+    "version": "0.3.7",
     "compilerOptions": {
         "lib": ["deno.ns", "dom", "dom.iterable", "esnext"]
     },
     "exports": {
-        ".": "./index.ts",
+        ".": "./deno-ui.ts",
         "./client": "./client.ts",
-        "./demo": "./sample-apps/minimal/app.ts",
-        "./fullDemo": "./sample-apps/full/app.ts"
+        "./build": "./memory-asset.ts",
+        "./examples/minimal": "./sample-apps/minimal/app.ts",
+        "./examples/module-ui": "./sample-apps/module-ui/app.ts",
+        "./examples/custom-html": "./sample-apps/custom-html/app.ts"
     },
     "license": "MIT",
     "minimumDependencyAge": 0

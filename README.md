@@ -9,31 +9,37 @@
 
 ## Demos
 
-Try the minimal demo to see how little code a Deno UI application needs. Its source is in `sample-apps/minimal`, consists of just two TypeScript files, and displays the system uptime:
+Try the minimal demo to see how little code a Deno UI application needs. It consists of a single TypeScript file in `sample-apps/minimal` and displays the system uptime:
 
 ```bash
-deno run -A jsr:@timepp/dui/demo
+deno run -A jsr:@timepp/dui/examples/minimal
 ```
 
-For a more complete example, run the full demo. Its source is in `sample-apps/full` and demonstrates a structured frontend project communicating with a local Deno backend. The application displays the machine's network interfaces:
+The module UI demo separates the frontend into its own TypeScript module while keeping the application small. Its source is in `sample-apps/module-ui`:
 
 ```bash
-deno run -A jsr:@timepp/dui/fullDemo
+deno run -A jsr:@timepp/dui/examples/module-ui
 ```
 
-Add `--appMode` to launch the full demo in a standalone browser app window:
+For a more complete example, run the custom HTML demo. Its source is in `sample-apps/custom-html` and demonstrates a structured frontend project communicating with a local Deno backend. The application displays the machine's network interfaces:
 
 ```bash
-deno run -A jsr:@timepp/dui/fullDemo --appMode
+deno run -A jsr:@timepp/dui/examples/custom-html
+```
+
+Add `--appMode` to launch the custom HTML demo in a standalone browser app window:
+
+```bash
+deno run -A jsr:@timepp/dui/examples/custom-html --appMode
 ```
 
 ![demo](doc/demo.png)
 
 ## Usage
 
-You can add Deno UI to an existing project or create a complete application from the provided template. Both approaches use the same API contract, backend implementation, and `startDenoUI()` startup flow described below.
+Add Deno UI to an existing project by importing it directly from JSR. The examples below cover an inline UI for small utilities and a separate frontend module for larger applications.
 
-### Add Deno UI to an existing application
+### Add Deno UI to an application
 
 No installation or project configuration is required. Import Deno UI directly from JSR, choose an existing TypeScript, JavaScript, or HTML file as the frontend entry, and pass it to `startDenoUI()` together with the local API implementation:
 
@@ -50,19 +56,28 @@ await startDenoUI({
 
 Deno UI starts the frontend and API servers, opens the browser, and manages communication between the frontend and the local Deno backend. Continue with the sections below to define the typed API and its implementation.
 
-### Create a new application from the template
+For a small utility, the frontend can also be an inline callback. Its `api` parameter is a fully typed client inferred from the local API implementation, so the entire application can live in one file:
 
-Run the bootstrap command to generate a complete starter project:
+```typescript
+import { startDenoUI } from "jsr:@timepp/dui"
 
-```bash
-deno run -A jsr:@timepp/dui create-app app1
+await startDenoUI({
+    appName: 'uptime',
+    api: {
+        getUptime: () => Deno.osUptime()
+    },
+    ui(api) {
+        const output = document.createElement('p')
+        document.body.appendChild(output)
+
+        setInterval(async () => {
+            output.textContent = `Uptime: ${await api.getUptime()} seconds`
+        }, 1000)
+    }
+})
 ```
 
-This creates a new application in the `app1` directory, including the frontend, typed API, backend implementation, and VS Code configuration. Change to that directory before continuing with the following steps:
-
-```bash
-cd app1
-```
+The inline `ui` callback runs in the browser and must be self-contained: it may use its `api` parameter and variables declared inside the callback, but it cannot capture variables or imports from the surrounding Deno module. Use a separate TypeScript or HTML frontend entry when the UI needs external modules, stylesheets, or static assets.
 
 ### define the typed local API in `api.ts`
 
@@ -157,13 +172,13 @@ denoUI.startDenoUI({
 
 You can publish your app to JSR so that it can be run without installation.
 
-For a simple application whose UI entry is a TypeScript or JavaScript module, no frontend build is required. Publish the application entry and UI source files directly. Deno UI loads the published UI module through Vite at runtime. The minimal demo uses this approach and can be run directly with:
+For a simple application whose UI entry is a TypeScript or JavaScript module, no frontend build is required. Publish the application entry and UI source files directly. Deno UI loads the published UI module through Vite at runtime. The module UI demo uses this approach and can be run directly with:
 
 ```bash
-deno run -A jsr:@timepp/dui/demo
+deno run -A jsr:@timepp/dui/examples/module-ui
 ```
 
-Applications with custom HTML, CSS, images, or other static resources can optionally run `buildDenoUIAssets()` before publishing and pass the generated `memoryAssets` to `startDenoUI()`. Deno UI detects these assets automatically; there is no release flag.
+Applications with custom HTML, CSS, images, or other static resources can optionally import `buildDenoUIAssets()` from `jsr:@timepp/dui/build`, run it before publishing, and pass the generated `memoryAssets` to `startDenoUI()`. Deno UI detects these assets automatically; there is no release flag.
 
 #### background: when resources need encoding
 
@@ -188,12 +203,12 @@ Deno UI never asks the browser to close its page. By default, the backend contin
 ### To test the latest published version
 
 ```sh
-deno run -A --minimum-dependency-age=0 jsr:@timepp/dui@0.3.3/demo
+deno run -A --minimum-dependency-age=0 jsr:@timepp/dui@0.3.6/examples/minimal
 ```
 
 ### Step to publish changes
 
-1. run `deno run -A build.ts` to update bootstrap files if there is any change in the full sample folder
+1. run `build.bat` to rebuild the custom HTML sample assets when its frontend changes
 
 2. upgrade version in `deno.json`
 

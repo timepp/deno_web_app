@@ -7,7 +7,10 @@ import { activateWindow } from './activate-window.ts'
 import * as so from "jsr:@lambdalisue/systemopen@1.0.0";
 import { registerSession, isSessionId, unregisterSessionsForClient } from './session-registry.ts'
 import * as tu from "jsr:@timepp/uu@1.0.6"
-import { createDenoUIHtml, denoUIClientPlugin, generatedHtmlPlugin, getRemoteUIEntryPath, remoteUIPlugin } from './vite-support.ts'
+import { createDenoUIHtml, denoUIClientPlugin, generatedHtmlPlugin, getInlineUIEntryPath, getRemoteUIEntryPath, inlineUIPlugin, remoteUIPlugin } from './vite-support.ts'
+import type { APIClient } from './client.ts'
+
+export type { APIClient } from './client.ts'
 
 const clients: WebSocket[] = []
 let apiServer: Deno.HttpServer | null = null
@@ -15,6 +18,7 @@ let appName = 'dui'
 
 export type APIHandler = (...args: unknown[]) => unknown | Promise<unknown>
 export type APIImplementation = Record<string, APIHandler>
+export type InlineUI<TAPI extends object> = (api: APIClient<TAPI>) => void | Promise<void>
 
 type RPCErrorCode = 'TOO_MANY_REQUESTS' | 'METHOD_NOT_FOUND' | 'HANDLER_ERROR' | 'SERIALIZATION_ERROR'
 
@@ -322,8 +326,8 @@ async function checkSameAppRunning(port: number, expectedAppName: string): Promi
 }
 
 export interface DenoUIArgs<TAPI extends object = APIImplementation> {
-    /** Frontend entry. TypeScript gets a generated HTML shell; HTML is served as provided. */
-    ui: string | URL
+    /** Frontend entry, or a self-contained browser callback for a single-file application. */
+    ui: string | URL | InlineUI<TAPI>
     /** Local implementation exposed to the frontend through typed RPC. */
     api: TAPI
     /** App identity used for ports, single-instance detection and window placement. */
@@ -357,16 +361,23 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
     const cfg = {...defaultDenoUIArgs, ...options}
     const windowTitle = options.title ?? cfg.appName
 
-    const remoteUI = options.ui instanceof URL && options.ui.protocol !== 'file:'
-    const uiPath = typeof options.ui === 'string'
+    const inlineUI = typeof options.ui === 'function'
+    const uiUrl = options.ui instanceof URL ? options.ui : undefined
+    const remoteUI = uiUrl !== undefined && uiUrl.protocol !== 'file:'
+    const virtualUI = inlineUI || remoteUI
+    const uiPath = inlineUI
+        ? ''
+        : typeof options.ui === 'string'
         ? resolve(options.ui)
-        : options.ui.protocol === 'file:'
-        ? fromFileUrl(options.ui)
-        : resolve(basename(options.ui.pathname))
-    const frontendRoot = remoteUI ? undefined : dirname(uiPath)
-    const uiFileName = basename(uiPath)
+        : uiUrl?.protocol === 'file:'
+        ? fromFileUrl(uiUrl)
+        : resolve(basename(uiUrl!.pathname))
+    const frontendRoot = virtualUI ? undefined : dirname(uiPath)
+    const uiFileName = inlineUI ? '' : basename(uiPath)
     const customHtml = extname(uiFileName).toLowerCase() === '.html'
-    const uiEntry = remoteUI && !customHtml
+    const uiEntry = inlineUI
+        ? getInlineUIEntryPath()
+        : remoteUI && !customHtml
         ? getRemoteUIEntryPath(options.ui as URL)
         : `/${encodeURIComponent(uiFileName)}`
     const pagePath = customHtml ? uiEntry : '/'
@@ -374,6 +385,9 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
     const embeddedPage = customHtml ? uiFileName : 'index.html'
     const memoryAssets = cfg.memoryAssets ?? {}
     const useStaticFrontend = Object.keys(memoryAssets).length > 0
+    if (inlineUI && useStaticFrontend) {
+        throw new Error('An inline ui callback cannot be combined with memoryAssets')
+    }
     if (useStaticFrontend && !Object.hasOwn(memoryAssets, embeddedPage)) {
         throw new Error(`memoryAssets must include ${embeddedPage}`)
     }
@@ -443,21 +457,22 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
     let temporaryFrontendRoot: string | undefined
     if (!useStaticFrontend) {
         console.log('starting Vite web server')
-        temporaryFrontendRoot = remoteUI ? await Deno.makeTempDir({ prefix: 'deno-ui-vite-' }) : undefined
+        temporaryFrontendRoot = virtualUI ? await Deno.makeTempDir({ prefix: 'deno-ui-vite-' }) : undefined
         try {
             frontend = await vite.createServer({
                 root: temporaryFrontendRoot ?? frontendRoot,
-                appType: remoteUI ? 'custom' : 'spa',
-                ...(remoteUI ? { optimizeDeps: { noDiscovery: true } } : {}),
+                appType: virtualUI ? 'custom' : 'spa',
+                ...(virtualUI ? { optimizeDeps: { noDiscovery: true } } : {}),
                 plugins: [
                     denoUIClientPlugin(),
+                    ...(inlineUI ? [inlineUIPlugin(Function.prototype.toString.call(options.ui))] : []),
                     ...(remoteUI ? [remoteUIPlugin(options.ui as URL)] : []),
                     ...(generatedHtml ? [generatedHtmlPlugin(generatedHtml)] : [])
                 ],
                 server: {
                     host: '127.0.0.1',
                     strictPort: true,
-                    watch: remoteUI ? null : undefined
+                    watch: virtualUI ? null : undefined
                 }
             })
             await frontend.listen(webPort)

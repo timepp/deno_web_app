@@ -1,6 +1,6 @@
 import { parseArgs } from "jsr:@std/cli@0.224.7/parse-args"
 import { apiImpl } from './api-impl.ts'
-import * as denoUI from "../../index.ts"
+import * as denoUI from 'jsr:@timepp/dui'
 
 const args = parseArgs(Deno.args)
 const memoryAssets = import.meta.url.startsWith('file://')

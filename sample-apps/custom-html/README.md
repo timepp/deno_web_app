@@ -1,4 +1,4 @@
-# Full Sample
+# Custom HTML Sample
 
 This directory demonstrates the recommended directory and file structure for a medium-to-large Deno UI application:
 
