@@ -7,8 +7,9 @@ import { activateWindow } from './activate-window.ts'
 import * as so from "jsr:@lambdalisue/systemopen@1.0.0";
 import { registerSession, isSessionId, unregisterSessionsForClient } from './session-registry.ts'
 import * as tu from "jsr:@timepp/uu@1.0.6"
-import { createDenoUIHtml, denoUIClientPlugin, generatedHtmlPlugin, getInlineUIEntryPath, getRemoteUIEntryPath, inlineUIPlugin, remoteUIPlugin } from './vite-support.ts'
+import { createDenoUIHtml, denoUIClientPlugin, generatedHtmlPlugin, getInlineUIEntryPath, getRemoteUIEntryPath, inlineUIPlugin, remoteUIPlugin, staticMountPlugin } from './vite-support.ts'
 import type { APIClient } from './client.ts'
+import { resolveStaticMounts, serveStaticMount, type ResolvedStaticMount, type StaticMounts } from './static-mounts.ts'
 
 export type { APIClient } from './client.ts'
 
@@ -224,9 +225,12 @@ function startApiServer(port: number, apiImpl: APIImplementation, closeWhenNoCli
     return apiServer
 }
 
-function startStaticWebServer(root: string, port: number, memoryAssets: Record<string, string>, generatedHtml?: string): Deno.HttpServer {
+function startStaticWebServer(root: string, port: number, memoryAssets: Record<string, string>, staticMounts: ResolvedStaticMount[], generatedHtml?: string): Deno.HttpServer {
     const handler = async (req: Request) => {
         let path = new URL(req.url).pathname;
+
+        const mountedResponse = await serveStaticMount(req.method, path, staticMounts)
+        if (mountedResponse) return mountedResponse
 
         if (path === "/") {
             if (generatedHtml === undefined) {
@@ -338,6 +342,8 @@ export interface DenoUIArgs<TAPI extends object = APIImplementation> {
     appMode?: boolean
     /** Advanced option containing pre-built frontend assets. Non-empty assets use the static frontend server. */
     memoryAssets?: Record<string, string>
+    /** Maps URL path prefixes to local directories served by the frontend server. */
+    staticMounts?: StaticMounts
     browser?: string
     browserProfile?: string
     /** Stop the backend three seconds after its last frontend disconnects. @default false */
@@ -355,6 +361,7 @@ const defaultDenoUIArgs = {
     apiPort: 0,
     webPort: 0,
     memoryAssets: {},
+    staticMounts: {},
 }
 
 export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>) {
@@ -384,6 +391,7 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
     const generatedHtml = customHtml ? undefined : createDenoUIHtml(uiEntry, windowTitle)
     const embeddedPage = customHtml ? uiFileName : 'index.html'
     const memoryAssets = cfg.memoryAssets ?? {}
+    const staticMounts = await resolveStaticMounts(cfg.staticMounts ?? {})
     const useStaticFrontend = Object.keys(memoryAssets).length > 0
     if (inlineUI && useStaticFrontend) {
         throw new Error('An inline ui callback cannot be combined with memoryAssets')
@@ -464,6 +472,7 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
                 appType: virtualUI ? 'custom' : 'spa',
                 ...(virtualUI ? { optimizeDeps: { noDiscovery: true } } : {}),
                 plugins: [
+                    staticMountPlugin(staticMounts),
                     denoUIClientPlugin(),
                     ...(inlineUI ? [inlineUIPlugin(Function.prototype.toString.call(options.ui))] : []),
                     ...(remoteUI ? [remoteUIPlugin(options.ui as URL)] : []),
@@ -483,7 +492,7 @@ export async function startDenoUI<TAPI extends object>(options: DenoUIArgs<TAPI>
             throw error
         }
     } else {
-        staticWebServer = startStaticWebServer(frontendRoot ?? Deno.cwd(), webPort, memoryAssets, generatedHtml)
+        staticWebServer = startStaticWebServer(frontendRoot ?? Deno.cwd(), webPort, memoryAssets, staticMounts, generatedHtml)
         console.log(`Static web server started on port ${webPort}`)
     }
     

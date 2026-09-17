@@ -152,6 +152,24 @@ const networkInfo = await api.getNetworkInfo('')
 
 The frontend and API always use separate ports. When `memoryAssets` is empty or omitted, Deno UI uses Vite as the frontend server. When pre-built `memoryAssets` are provided, it automatically uses a lightweight static frontend server. Applications do not need to select a development or release mode.
 
+### Serving local resource directories
+
+Use `staticMounts` when the frontend needs files outside its own directory. Each key is a URL path prefix and each value is a local directory:
+
+```typescript
+await startDenoUI({
+    appName: 'photo-browser',
+    ui: new URL('./frontend/ui.ts', import.meta.url),
+    api: apiImpl,
+    staticMounts: {
+        '/db': 'D:\\photo-database',
+        '/exports': new URL('./generated-exports/', import.meta.url)
+    }
+})
+```
+
+The frontend can then load a file with `<img src="/db/xxxx.jpg">`. The same mapping works with both the Vite and pre-built `memoryAssets` frontend servers. Mounts only serve files under the configured directory, do not list directories, and require Deno read permission for those directories.
+
 ### Security model
 
 Deno UI binds its HTTP and WebSocket servers to `127.0.0.1`. Each launch uses a cryptographically random session token, and WebSocket upgrades require both that token and the exact frontend Origin. This protects the RPC channel from LAN access and cross-site WebSocket requests.

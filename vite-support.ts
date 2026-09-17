@@ -1,4 +1,5 @@
 import { transformWithEsbuild, type Plugin, type ViteDevServer } from 'npm:vite@6.3.5'
+import { serveStaticMount, type ResolvedStaticMount } from './static-mounts.ts'
 
 // Keep the .ts suffix so Vite applies its TypeScript transform to the virtual module.
 const virtualClientId = '\0deno-ui-client.ts'
@@ -143,6 +144,45 @@ export function generatedHtmlPlugin(html: string): Plugin {
                     res.statusCode = 200
                     res.setHeader('Content-Type', 'text/html; charset=utf-8')
                     res.end(transformed)
+                } catch (error) {
+                    next(error as Error)
+                }
+            })
+        }
+    }
+}
+
+export function staticMountPlugin(mounts: ResolvedStaticMount[]): Plugin {
+    return {
+        name: 'deno-ui-static-mounts',
+        enforce: 'pre',
+        configureServer(server: ViteDevServer) {
+            server.middlewares.use(async (req, res, next) => {
+                try {
+                    const request = req as { url?: string, method?: string }
+                    const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
+                    const response = await serveStaticMount(request.method ?? 'GET', pathname, mounts)
+                    if (!response) {
+                        next()
+                        return
+                    }
+
+                    res.statusCode = response.status
+                    response.headers.forEach((value, name) => res.setHeader(name, value))
+                    if (!response.body) {
+                        res.end()
+                        return
+                    }
+
+                    const reader = response.body.getReader()
+                    while (true) {
+                        const { done, value } = await reader.read()
+                        if (done) break
+                        if (!res.write(value)) {
+                            await new Promise<void>(resolve => res.once('drain', resolve))
+                        }
+                    }
+                    res.end()
                 } catch (error) {
                     next(error as Error)
                 }
