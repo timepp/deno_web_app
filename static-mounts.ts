@@ -67,7 +67,7 @@ export async function serveStaticMount(
 
         const headers = {
             'content-type': typeByExtension(extname(filePath)) || 'application/octet-stream',
-            'cache-control': 'no-cache'
+            'cache-control': 'public, max-age=86400'
         }
         if (method === 'HEAD') return new Response(null, { headers })
 

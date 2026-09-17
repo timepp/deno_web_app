@@ -10,10 +10,12 @@ Deno.test('static mounts serve files and support HEAD', async () => {
         const response = await serveStaticMount('GET', '/db/photo.jpg', mounts)
         assertEquals(response?.status, 200)
         assertEquals(response?.headers.get('content-type'), 'image/jpeg')
+        assertEquals(response?.headers.get('cache-control'), 'public, max-age=86400')
         assertEquals(await response?.text(), 'image data')
 
         const headResponse = await serveStaticMount('HEAD', '/db/photo.jpg', mounts)
         assertEquals(headResponse?.status, 200)
+        assertEquals(headResponse?.headers.get('cache-control'), 'public, max-age=86400')
         assertEquals(headResponse?.body, null)
     } finally {
         await Deno.remove(root, { recursive: true })

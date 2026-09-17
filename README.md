@@ -168,7 +168,7 @@ await startDenoUI({
 })
 ```
 
-The frontend can then load a file with `<img src="/db/xxxx.jpg">`. The same mapping works with both the Vite and pre-built `memoryAssets` frontend servers. Mounts only serve files under the configured directory, do not list directories, and require Deno read permission for those directories.
+The frontend can then load a file with `<img src="/db/xxxx.jpg">`. The same mapping works with both the Vite and pre-built `memoryAssets` frontend servers. Mounts only serve files under the configured directory, do not list directories, and require Deno read permission for those directories. Responses are cached by the browser for one day; use a new filename or a version query parameter when replacing a file at the same path.
 
 ### Security model
 
