@@ -1,4 +1,4 @@
-import {api} from '../api.ts'
+import {api} from './api.ts'
 
 async function main() {
     const networkInfo = await api.getNetworkInfo('')
