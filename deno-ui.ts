@@ -40,6 +40,19 @@ function isErrorWithCode(e: unknown): e is { code: string } {
     return typeof e === 'object' && e !== null && 'code' in e && typeof (e as { code: unknown }).code === 'string'
 }
 
+function decodeArgument(value: unknown, socket: WebSocket): unknown {
+    if (typeof value !== 'object' || value === null) return value
+
+    const record = value as Record<string, unknown>
+    if (Number.isSafeInteger(record.$duiCallback) && Object.keys(record).length === 1) {
+        const callbackId = record.$duiCallback as number
+        return (...params: unknown[]) => {
+            socket.send(JSON.stringify({ type: 'rpc.callback', callbackId, params }))
+        }
+    }
+    return value
+}
+
 function getWindowPlacementPath(): string | null {
     const appData = Deno.env.get('APPDATA')
     if (!appData) return null
@@ -170,7 +183,8 @@ function startApiServer(port: number, apiImpl: APIImplementation, closeWhenNoCli
                     const func = apiImpl[method]
                     let result: unknown
                     try {
-                        result = await func.apply(apiImpl, params)
+                        const decodedParams = params.map(param => decodeArgument(param, socket))
+                        result = await func.apply(apiImpl, decodedParams)
                     } catch (error) {
                         console.error(`API method ${method} failed:`, error)
                         sendRPCError(socket, id as number, 'HANDLER_ERROR', getErrorMessage(error))

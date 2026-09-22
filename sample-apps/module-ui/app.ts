@@ -4,6 +4,12 @@ import type { BackendAPI } from "./ui.ts"
 const apiImpl: BackendAPI = {
     getUptime: async () => {
         return Deno.osUptime()
+    },
+    longTask: async (callback: (status: string) => void) => {
+        for (let i = 0; i < 10; i++) {
+            callback(`Progress: ${i + 1}/10`)
+            await new Promise(resolve => setTimeout(resolve, 1000))
+        }
     }
 }
 

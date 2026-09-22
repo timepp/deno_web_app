@@ -7,6 +7,7 @@ export type APIClient<T extends object> = {
 type PendingRequest = {
     resolve: (value: unknown) => void
     reject: (reason: Error) => void
+    callbackIds: number[]
 }
 
 type StreamSubscriber = {
@@ -24,10 +25,26 @@ export class RPCError extends Error {
 let ws: WebSocket | null = null
 let connecting: Promise<WebSocket> | null = null
 let requestID = 100
+let callbackID = 0
 let windowPlacementTimer: ReturnType<typeof setInterval> | undefined
 const pendingRequests = new Map<number, PendingRequest>()
+const callbacks = new Map<number, (...args: unknown[]) => void>()
 const streamSubscribers = new Map<string, StreamSubscriber>()
 const browser = globalThis as typeof globalThis & Window
+
+function encodeArgument(value: unknown, callbackIds: number[]): unknown {
+    if (typeof value === 'function') {
+        const id = ++callbackID
+        callbacks.set(id, value as (...args: unknown[]) => void)
+        callbackIds.push(id)
+        return { $duiCallback: id }
+    }
+    return value
+}
+
+function deleteCallbacks(callbackIds: number[]) {
+    for (const id of callbackIds) callbacks.delete(id)
+}
 
 function getStartupContext() {
     const startupParams = new URLSearchParams(browser.location.search)
@@ -94,7 +111,10 @@ function getWebSocket(): Promise<WebSocket> {
             if (ws === socket) ws = null
             connecting = null
             const error = new Error('Deno UI service connection closed')
-            for (const pending of pendingRequests.values()) pending.reject(error)
+            for (const pending of pendingRequests.values()) {
+                deleteCallbacks(pending.callbackIds)
+                pending.reject(error)
+            }
             pendingRequests.clear()
         }
         socket.onmessage = event => {
@@ -120,6 +140,19 @@ function getWebSocket(): Promise<WebSocket> {
                 return
             }
 
+            if (message.type === 'rpc.callback') {
+                if (!Number.isSafeInteger(message.callbackId) || !Array.isArray(message.params)) return
+                const callback = callbacks.get(message.callbackId as number)
+                if (callback) {
+                    try {
+                        callback(...message.params)
+                    } catch (error) {
+                        console.error('API callback failed:', error)
+                    }
+                }
+                return
+            }
+
             if (message.type !== 'rpc.response' || !Number.isSafeInteger(message.id)) {
                 console.error('Ignored unknown message from Deno UI service:', message)
                 return
@@ -128,6 +161,7 @@ function getWebSocket(): Promise<WebSocket> {
             const pending = pendingRequests.get(id)
             if (!pending) return
             pendingRequests.delete(id)
+            deleteCallbacks(pending.callbackIds)
             if (typeof message.error === 'object' && message.error !== null) {
                 const error = message.error as Record<string, unknown>
                 const code = typeof error.code === 'string' ? error.code : 'UNKNOWN_ERROR'
@@ -147,8 +181,18 @@ function getWebSocket(): Promise<WebSocket> {
 async function callAPI(method: string, args: unknown[]): Promise<unknown> {
     const socket = await getWebSocket()
     const id = ++requestID
-    socket.send(JSON.stringify({ type: 'rpc.request', id, method, params: args }))
-    return await new Promise((resolve, reject) => pendingRequests.set(id, { resolve, reject }))
+    const callbackIds: number[] = []
+    const params = args.map(arg => encodeArgument(arg, callbackIds))
+    return await new Promise((resolve, reject) => {
+        pendingRequests.set(id, { resolve, reject, callbackIds })
+        try {
+            socket.send(JSON.stringify({ type: 'rpc.request', id, method, params }))
+        } catch (error) {
+            pendingRequests.delete(id)
+            deleteCallbacks(callbackIds)
+            reject(error)
+        }
+    })
 }
 
 export function createClient<T extends object>(): APIClient<T> {

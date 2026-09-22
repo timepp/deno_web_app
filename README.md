@@ -73,6 +73,30 @@ import { api } from '../api.ts'
 const networkInfo = await api.getNetworkInfo('')
 ```
 
+API methods may also receive callback arguments. This is useful when a long-running backend operation needs to report progress while it is running:
+
+```typescript
+// backend
+export const apiImpl = {
+    async refreshFiles(
+        forceName: string,
+        onSingleFileComplete: (filename: string, status: string) => void
+    ) {
+        for (const filename of await findFiles(forceName)) {
+            await refreshFile(filename)
+            onSingleFileComplete(filename, 'complete')
+        }
+    }
+}
+
+// frontend
+await api.refreshFiles('images', (filename, status) => {
+    console.log(filename, status)
+})
+```
+
+Callbacks are sent over the existing WebSocket connection and remain valid until the API call completes. Callback arguments and return values must be JSON-serializable; callback return values are ignored.
+
 Finally, pass the frontend entry and API implementation to `startDenoUI()`. No installation or project configuration is required:
 
 ```typescript

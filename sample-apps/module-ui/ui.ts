@@ -1,5 +1,6 @@
 export interface BackendAPI {
-    getUptime(): Promise<number>
+    getUptime(): Promise<number>,
+    longTask(callback: (status: string) => void): Promise<void>,
 }
 
 import { createClient } from 'jsr:@timepp/dui/client'
@@ -12,5 +13,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const uptime = await api.getUptime()
         div.textContent = `System Uptime: ${uptime} seconds`
     }, 1000)
+
+    const log = document.createElement('pre')
+    document.body.appendChild(log)
+    api.longTask((status) => {
+        log.textContent += status + '\n'
+    })
 }, false);
 
