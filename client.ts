@@ -31,6 +31,65 @@ const pendingRequests = new Map<number, PendingRequest>()
 const callbacks = new Map<number, (...args: unknown[]) => void>()
 const streamSubscribers = new Map<string, StreamSubscriber>()
 const browser = globalThis as typeof globalThis & Window
+const disconnectedBannerId = '_dui-service-disconnected'
+
+function showServiceDisconnectedBanner() {
+    const document = browser.document
+    if (document.getElementById(disconnectedBannerId)) return
+
+    const showBanner = () => {
+        if (!document.body || document.getElementById(disconnectedBannerId)) return
+
+        const banner = document.createElement('div')
+        banner.id = disconnectedBannerId
+        banner.setAttribute('role', 'alert')
+        banner.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 2147483647;
+            box-sizing: border-box;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 12px 16px;
+            color: #ffffff;
+            background: #b42318;
+            box-shadow: 0 2px 8px #00000040;
+            font: 600 14px/1.4 system-ui, sans-serif;
+        `
+
+        const message = document.createElement('span')
+        message.textContent = 'Disconnected from Service.'
+        banner.appendChild(message)
+
+        const closeButton = document.createElement('button')
+        closeButton.type = 'button'
+        closeButton.textContent = 'Close Page'
+        closeButton.style.cssText = `
+            flex: none;
+            padding: 6px 12px;
+            border: 1px solid #ffffff;
+            border-radius: 4px;
+            color: #7a271a;
+            background: #ffffff;
+            font: 600 13px/1.2 system-ui, sans-serif;
+            cursor: pointer;
+        `
+        closeButton.addEventListener('click', () => browser.close())
+        banner.appendChild(closeButton)
+
+        document.body.prepend(banner)
+    }
+
+    if (document.body) {
+        showBanner()
+    } else {
+        document.addEventListener('DOMContentLoaded', showBanner, { once: true })
+    }
+}
 
 function encodeArgument(value: unknown, callbackIds: number[]): unknown {
     if (typeof value === 'function') {
@@ -96,8 +155,10 @@ function getWebSocket(): Promise<WebSocket> {
         const port = startupParams.get('_apiPort') || browser.location.port || (protocol === 'https:' ? '443' : '80')
         const socketUrl = `${protocol === 'https:' ? 'wss:' : 'ws:'}//${host}:${port}/_dui/ws?token=${encodeURIComponent(sessionToken)}`
         const socket = new WebSocket(socketUrl)
+        let opened = false
 
         socket.onopen = () => {
+            opened = true
             ws = socket
             if (startupParams.has('_saveWindow') && windowPlacementTimer === undefined) {
                 saveWindowPlacement()
@@ -110,6 +171,7 @@ function getWebSocket(): Promise<WebSocket> {
         socket.onclose = () => {
             if (ws === socket) ws = null
             connecting = null
+            if (opened) showServiceDisconnectedBanner()
             const error = new Error('Deno UI service connection closed')
             for (const pending of pendingRequests.values()) {
                 deleteCallbacks(pending.callbackIds)

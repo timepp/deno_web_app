@@ -223,9 +223,11 @@ API invocation uses discriminated WebSocket messages. RPC requests use `rpc.requ
 
 Unknown methods and exceptions thrown by local API implementations reject the frontend promise with `RPCError`. Its `code` is `METHOD_NOT_FOUND`, `HANDLER_ERROR`, `TOO_MANY_REQUESTS`, or `SERIALIZATION_ERROR`, and its `message` contains the relevant details.
 
-Deno UI never asks the browser to close its page. By default, the backend continues running after all frontends disconnect. Applications can opt in to stopping the backend three seconds after the last frontend disconnects by setting `closeWhenNoClients: true`; this option only controls the backend process and does not close any browser page.
+Deno UI does not automatically close its page. If the service connection is lost, the frontend displays a banner with a button that lets the user close the page. By default, the backend continues running after all frontends disconnect. Applications can opt in to stopping the backend three seconds after the last frontend disconnects by setting `closeWhenNoClients: true`; this option only controls the backend process.
 
 ## Development
+
+When developing this repository, running a sample source file directly resolves `jsr:@timepp/dui` as a self-reference through the package name and exports in `deno.json`. The frontend plugin also loads the local `client.ts`, so library changes can be tested immediately without publishing them to JSR.
 
 ### Test the latest published version
 
