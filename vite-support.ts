@@ -1,4 +1,5 @@
 import { transformWithEsbuild, type Plugin, type ViteDevServer } from 'npm:vite@6.3.5'
+import clientSource from './client.ts' with { type: 'text' }
 import { serveStaticMount, type ResolvedStaticMount } from './static-mounts.ts'
 
 // Keep the .ts suffix so Vite applies its TypeScript transform to the virtual module.
@@ -8,15 +9,6 @@ const inlineUIEntryPath = '/_dui/inline-entry.js'
 const virtualInlineUIId = '\0deno-ui-inline-entry.js'
 const remoteEntryPath = '/_dui/remote-entry'
 const remoteModulePrefix = '\0deno-ui-remote:'
-
-async function loadClientSource(): Promise<string> {
-    const url = new URL('./client.ts', import.meta.url)
-    if (url.protocol === 'file:') return await Deno.readTextFile(url)
-
-    const response = await fetch(url)
-    if (!response.ok) throw new Error(`Unable to load Deno UI client: ${response.status} ${response.statusText}`)
-    return await response.text()
-}
 
 export function createDenoUIHtml(entry: string, title = 'Deno UI'): string {
     const escapedTitle = title.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
@@ -43,7 +35,7 @@ export function denoUIClientPlugin(): Plugin {
         },
         async load(id) {
             if (id !== virtualClientId) return null
-            return await transformWithEsbuild(await loadClientSource(), 'deno-ui-client.ts', {
+            return await transformWithEsbuild(clientSource, 'deno-ui-client.ts', {
                 loader: 'ts',
                 target: 'esnext'
             })
