@@ -23,6 +23,11 @@ export type InlineUI<TAPI extends object> = (api: APIClient<TAPI>) => void | Pro
 
 type RPCErrorCode = 'TOO_MANY_REQUESTS' | 'METHOD_NOT_FOUND' | 'HANDLER_ERROR' | 'SERIALIZATION_ERROR'
 
+type PendingCallback = {
+    resolve: (value: unknown) => void
+    reject: (reason: Error) => void
+}
+
 function sendRPCError(socket: WebSocket, id: number, code: RPCErrorCode, message: string) {
     console.error(`RPC Error [${code}]: ${message}`)
     socket.send(JSON.stringify({
@@ -40,15 +45,16 @@ function isErrorWithCode(e: unknown): e is { code: string } {
     return typeof e === 'object' && e !== null && 'code' in e && typeof (e as { code: unknown }).code === 'string'
 }
 
-function decodeArgument(value: unknown, socket: WebSocket): unknown {
+function decodeArgument(
+    value: unknown,
+    invokeCallback: (callbackId: number, params: unknown[]) => Promise<unknown>
+): unknown {
     if (typeof value !== 'object' || value === null) return value
 
     const record = value as Record<string, unknown>
     if (Number.isSafeInteger(record.$duiCallback) && Object.keys(record).length === 1) {
         const callbackId = record.$duiCallback as number
-        return (...params: unknown[]) => {
-            socket.send(JSON.stringify({ type: 'rpc.callback', callbackId, params }))
-        }
+        return (...params: unknown[]) => invokeCallback(callbackId, params)
     }
     return value
 }
@@ -110,6 +116,32 @@ function startApiServer(port: number, apiImpl: APIImplementation, closeWhenNoCli
             }
             const { socket, response } = Deno.upgradeWebSocket(req);
             let activeRequests = 0
+            let callbackInvocationId = 0
+            const pendingCallbacks = new Map<number, PendingCallback>()
+            const invokeCallback = (callbackId: number, params: unknown[]): Promise<unknown> => {
+                const invocationId = ++callbackInvocationId
+                return new Promise((resolve, reject) => {
+                    let request: string
+                    try {
+                        request = JSON.stringify({
+                            type: 'rpc.callback',
+                            callbackId,
+                            invocationId,
+                            params
+                        })
+                    } catch (error) {
+                        reject(new Error(`Failed to serialize callback arguments: ${getErrorMessage(error)}`))
+                        return
+                    }
+                    pendingCallbacks.set(invocationId, { resolve, reject })
+                    try {
+                        socket.send(request)
+                    } catch (error) {
+                        pendingCallbacks.delete(invocationId)
+                        reject(error)
+                    }
+                })
+            }
             socket.onopen = () => {
                 if (clients.length >= 8) {
                     socket.close(1013, 'Too many connections')
@@ -158,6 +190,26 @@ function startApiServer(port: number, apiImpl: APIImplementation, closeWhenNoCli
                     saveWindowPlacement(x, y, width, height)
                     return
                 }
+                if (type === 'rpc.callback.response') {
+                    const {invocationId, result, error} = message as Record<string, unknown>
+                    if (!Number.isSafeInteger(invocationId)) {
+                        closeSocketWithMessage('Invalid callback response, expected a numeric invocationId')
+                        return
+                    }
+                    const pending = pendingCallbacks.get(invocationId as number)
+                    if (!pending) return
+                    pendingCallbacks.delete(invocationId as number)
+                    if (typeof error === 'object' && error !== null) {
+                        const errorRecord = error as Record<string, unknown>
+                        const errorMessage = typeof errorRecord.message === 'string'
+                            ? errorRecord.message
+                            : 'Unknown callback error'
+                        pending.reject(new Error(errorMessage))
+                    } else {
+                        pending.resolve(result)
+                    }
+                    return
+                }
                 if (type !== 'rpc.request') {
                     closeSocketWithMessage('Invalid message type')
                     return
@@ -183,7 +235,7 @@ function startApiServer(port: number, apiImpl: APIImplementation, closeWhenNoCli
                     const func = apiImpl[method]
                     let result: unknown
                     try {
-                        const decodedParams = params.map(param => decodeArgument(param, socket))
+                        const decodedParams = params.map(param => decodeArgument(param, invokeCallback))
                         result = await func.apply(apiImpl, decodedParams)
                     } catch (error) {
                         console.error(`API method ${method} failed:`, error)
@@ -212,6 +264,9 @@ function startApiServer(port: number, apiImpl: APIImplementation, closeWhenNoCli
             }
             socket.onclose = () => {
                 console.log("socket closed");
+                const error = new Error('Deno UI client connection closed')
+                for (const pending of pendingCallbacks.values()) pending.reject(error)
+                pendingCallbacks.clear()
                 const i = clients.indexOf(socket)
                 if (i >= 0) {
                     clients.splice(i, 1)

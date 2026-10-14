@@ -10,6 +10,11 @@ const apiImpl: BackendAPI = {
             callback(`Progress: ${i + 1}/10`)
             await new Promise(resolve => setTimeout(resolve, 1000))
         }
+    },
+    greeting: async (callback: (message: string) => Promise<string>) => {
+        const response = await callback("Hello from backend, what's your name?")
+        console.log(`Frontend responded with: ${response}`)
+        return `User ${response} is awesome!`
     }
 }
 

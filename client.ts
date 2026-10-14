@@ -28,7 +28,7 @@ let requestID = 100
 let callbackID = 0
 let windowPlacementTimer: ReturnType<typeof setInterval> | undefined
 const pendingRequests = new Map<number, PendingRequest>()
-const callbacks = new Map<number, (...args: unknown[]) => void>()
+const callbacks = new Map<number, (...args: unknown[]) => unknown>()
 const streamSubscribers = new Map<string, StreamSubscriber>()
 const browser = globalThis as typeof globalThis & Window
 const disconnectedBannerId = '_dui-service-disconnected'
@@ -94,7 +94,7 @@ function showServiceDisconnectedBanner() {
 function encodeArgument(value: unknown, callbackIds: number[]): unknown {
     if (typeof value === 'function') {
         const id = ++callbackID
-        callbacks.set(id, value as (...args: unknown[]) => void)
+        callbacks.set(id, value as (...args: unknown[]) => unknown)
         callbackIds.push(id)
         return { $duiCallback: id }
     }
@@ -203,15 +203,43 @@ function getWebSocket(): Promise<WebSocket> {
             }
 
             if (message.type === 'rpc.callback') {
-                if (!Number.isSafeInteger(message.callbackId) || !Array.isArray(message.params)) return
+                if (!Number.isSafeInteger(message.callbackId) ||
+                    !Number.isSafeInteger(message.invocationId) ||
+                    !Array.isArray(message.params)) return
+                const invocationId = message.invocationId as number
+                const params = message.params
                 const callback = callbacks.get(message.callbackId as number)
-                if (callback) {
-                    try {
-                        callback(...message.params)
-                    } catch (error) {
-                        console.error('API callback failed:', error)
-                    }
+                if (!callback) {
+                    socket.send(JSON.stringify({
+                        type: 'rpc.callback.response',
+                        invocationId,
+                        error: { message: 'Callback is no longer available' }
+                    }))
+                    return
                 }
+                void Promise.resolve()
+                    .then(() => callback(...params))
+                    .then(result => {
+                        socket.send(JSON.stringify({
+                            type: 'rpc.callback.response',
+                            invocationId,
+                            result
+                        }))
+                    })
+                    .catch(error => {
+                        const errorMessage = error instanceof Error ? error.message : String(error)
+                        console.error('API callback failed:', error)
+                        socket.send(JSON.stringify({
+                            type: 'rpc.callback.response',
+                            invocationId,
+                            error: { message: errorMessage }
+                        }))
+                    })
+                return
+            }
+
+            if (message.type === 'rpc.callback.response') {
+                console.error('Ignored unexpected callback response from Deno UI service:', message)
                 return
             }
 
